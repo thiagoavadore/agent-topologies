@@ -1,0 +1,52 @@
+{
+  "planted": [
+    {
+      "file": "bookings-api.md",
+      "category": "missing_timeout"
+    },
+    {
+      "file": "bookings-api.md",
+      "category": "no_rate_limit"
+    },
+    {
+      "file": "payments-gateway.md",
+      "category": "hardcoded_secret"
+    },
+    {
+      "file": "fleet-telemetry.md",
+      "category": "single_point_of_failure"
+    },
+    {
+      "file": "fleet-telemetry.md",
+      "category": "no_owner"
+    },
+    {
+      "file": "customer-profiles.md",
+      "category": "missing_backup"
+    },
+    {
+      "file": "pricing-engine.md",
+      "category": "unpinned_dependency"
+    },
+    {
+      "file": "admin-console.md",
+      "category": "public_exposure"
+    },
+    {
+      "file": "notifications.md",
+      "category": "missing_timeout"
+    },
+    {
+      "file": "notifications.md",
+      "category": "unpinned_dependency"
+    },
+    {
+      "file": "maintenance-scheduler.md",
+      "category": "single_point_of_failure"
+    },
+    {
+      "file": "maintenance-scheduler.md",
+      "category": "missing_backup"
+    }
+  ]
+}

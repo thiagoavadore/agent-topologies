@@ -1,0 +1,22 @@
+[project]
+name = "agent-topologies"
+version = "0.1.0"
+description = "Multi-agent topologies read as org charts: one runnable folder per topology."
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.70",
+    "jsonschema>=4.23",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/topologies"]
+
+[tool.pytest.ini_options]
+testpaths = ["01-orchestrator-worker/tests"]

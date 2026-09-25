@@ -1,0 +1,75 @@
+[supervisor] router planned 4 subtask(s) for 8 card(s)
+[worker w1] ok: 4 finding(s) on 2 card(s), 1 attempt(s)
+[worker w2] ok: 4 finding(s) on 2 card(s), 1 attempt(s)
+[worker w3] ok: 2 finding(s) on 2 card(s), 1 attempt(s)
+[worker w4] ok: 6 finding(s) on 2 card(s), 1 attempt(s)
+[supervisor] 16 validated finding(s), 0 card(s) not reviewed, 26379 tokens
+[supervisor] router planned 3 subtask(s) for 8 card(s)
+[cap] merged 3 subtasks into 2 workers
+[worker capped-1] ok: 8 finding(s) on 5 card(s), 1 attempt(s)
+[worker capped-2] ok: 4 finding(s) on 3 card(s), 1 attempt(s)
+[supervisor] 12 validated finding(s), 0 card(s) not reviewed, 21832 tokens
+[supervisor] router killed (--break-router); deterministic fallback into 2 subtask(s)
+[worker fallback-1] ok: 7 finding(s) on 4 card(s), 1 attempt(s)
+[worker fallback-2] ok: 11 finding(s) on 4 card(s), 1 attempt(s)
+[supervisor] 13 validated finding(s), 0 card(s) not reviewed, 18538 tokens
+[supervisor] router planned 4 subtask(s) for 8 card(s)
+[worker w1] ok: 4 finding(s) on 3 card(s), 1 attempt(s)
+[worker w2] ok: 3 finding(s) on 2 card(s), 1 attempt(s)
+[worker w3] ok: 5 finding(s) on 2 card(s), 1 attempt(s)
+[worker w4] ok: 2 finding(s) on 1 card(s), 1 attempt(s)
+[supervisor] 14 validated finding(s), 0 card(s) not reviewed, 36796 tokens
+[supervisor] router planned 3 subtask(s) for 8 card(s)
+[cap] merged 3 subtasks into 2 workers
+[worker capped-1] ok: 10 finding(s) on 6 card(s), 1 attempt(s)
+[worker capped-2] ok: 4 finding(s) on 2 card(s), 1 attempt(s)
+[supervisor] 14 validated finding(s), 0 card(s) not reviewed, 24533 tokens
+[supervisor] router killed (--break-router); deterministic fallback into 2 subtask(s)
+[worker fallback-1] ok: 6 finding(s) on 4 card(s), 1 attempt(s)
+[worker fallback-2] ok: 6 finding(s) on 4 card(s), 1 attempt(s)
+[supervisor] 12 validated finding(s), 0 card(s) not reviewed, 19573 tokens
+[supervisor] router planned 4 subtask(s) for 8 card(s)
+[worker w1] ok: 4 finding(s) on 3 card(s), 1 attempt(s)
+[worker w2] ok: 3 finding(s) on 2 card(s), 1 attempt(s)
+[worker w3] ok: 6 finding(s) on 2 card(s), 1 attempt(s)
+[worker w4] ok: 3 finding(s) on 1 card(s), 1 attempt(s)
+[supervisor] 15 validated finding(s), 0 card(s) not reviewed, 37990 tokens
+[supervisor] router planned 4 subtask(s) for 8 card(s)
+[cap] merged 4 subtasks into 2 workers
+[worker capped-1] ok: 6 finding(s) on 4 card(s), 1 attempt(s)
+[worker capped-2] ok: 7 finding(s) on 4 card(s), 1 attempt(s)
+[supervisor] 13 validated finding(s), 0 card(s) not reviewed, 23892 tokens
+[supervisor] router killed (--break-router); deterministic fallback into 2 subtask(s)
+[worker fallback-1] ok: 7 finding(s) on 4 card(s), 1 attempt(s)
+[worker fallback-2] ok: 5 finding(s) on 4 card(s), 1 attempt(s)
+[supervisor] 12 validated finding(s), 0 card(s) not reviewed, 26897 tokens
+[supervisor] router planned 4 subtask(s) for 8 card(s)
+[worker w1] ok: 4 finding(s) on 3 card(s), 1 attempt(s)
+[worker w2] ok: 3 finding(s) on 2 card(s), 1 attempt(s)
+[worker w3] ok: 5 finding(s) on 2 card(s), 1 attempt(s)
+[worker w4] ok: 2 finding(s) on 1 card(s), 1 attempt(s)
+[supervisor] 13 validated finding(s), 0 card(s) not reviewed, 39701 tokens
+[supervisor] router planned 4 subtask(s) for 8 card(s)
+[cap] merged 4 subtasks into 2 workers
+[worker capped-1] ok: 8 finding(s) on 5 card(s), 1 attempt(s)
+[worker capped-2] ok: 5 finding(s) on 3 card(s), 1 attempt(s)
+[supervisor] 13 validated finding(s), 0 card(s) not reviewed, 26261 tokens
+[supervisor] router killed (--break-router); deterministic fallback into 2 subtask(s)
+[worker fallback-1] ok: 7 finding(s) on 4 card(s), 1 attempt(s)
+[worker fallback-2] ok: 6 finding(s) on 4 card(s), 1 attempt(s)
+[supervisor] 13 validated finding(s), 0 card(s) not reviewed, 24862 tokens
+[supervisor] router planned 4 subtask(s) for 8 card(s)
+[worker w1] ok: 5 finding(s) on 3 card(s), 1 attempt(s)
+[worker w2] ok: 4 finding(s) on 2 card(s), 1 attempt(s)
+[worker w3] ok: 7 finding(s) on 2 card(s), 1 attempt(s)
+[worker w4] ok: 4 finding(s) on 1 card(s), 1 attempt(s)
+[supervisor] 20 validated finding(s), 0 card(s) not reviewed, 41999 tokens
+[supervisor] router planned 4 subtask(s) for 8 card(s)
+[cap] merged 4 subtasks into 2 workers
+[worker capped-1] ok: 8 finding(s) on 5 card(s), 1 attempt(s)
+[worker capped-2] ok: 4 finding(s) on 3 card(s), 1 attempt(s)
+[supervisor] 12 validated finding(s), 0 card(s) not reviewed, 19874 tokens
+[supervisor] router killed (--break-router); deterministic fallback into 2 subtask(s)
+[worker fallback-1] ok: 7 finding(s) on 4 card(s), 1 attempt(s)
+[worker fallback-2] ok: 8 finding(s) on 4 card(s), 1 attempt(s)
+[supervisor] 13 validated finding(s), 0 card(s) not reviewed, 25099 tokens
