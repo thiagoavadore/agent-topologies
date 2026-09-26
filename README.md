@@ -1,32 +1,32 @@
 # agent-topologies
 
-Multi-agent topologies read as org charts. One folder per topology, each runnable, each with a number from a real run.
+When several AI agents work on one job, someone has to decide how the work is split, who handles each part, and who settles disagreements. Those are the same questions a manager answers when organising a team. This repo tests common multi-agent setups by asking those questions, and backs each answer with a real, measured run.
 
-Companion code for the series "Agent topologies are org charts" in [The Recovering CTO](https://writing.tilinthecloud.com). The series sorts patterns by **who owns the split**, meaning who decomposes the work, who owns each boundary, and who breaks a tie, rather than by the shape of the diagram.
+It's the companion code for the series "Agent topologies are org charts" in [The Recovering CTO](https://writing.tilinthecloud.com). Each folder is one setup, runs on its own, and has a README with the question, the experiment and the result.
 
-| Folder | Topology | Org question | Issue |
+| Folder | The setup | The question it tests | Issue |
 |---|---|---|---|
-| [`01-orchestrator-worker`](01-orchestrator-worker/) | Supervisor splits, workers execute against a strict contract | Who owns the decomposition, and what happens when they are out? | 13 |
-| `02-pipeline-checkpoint` | Sequential pipeline with checkpoints | Who owns stage N's failure? | 14 (planned) |
-| `03-fan-out-partial-reducer` | Fan-out / fan-in with a partial reducer | Who owns the merge? | 14 (planned) |
-| `04-hierarchical` | Multi-tier hierarchy | Are domain boundaries team boundaries? | 15 (planned) |
-| `05-event-bus` | Event-driven bus | Who owns the bus as a product? | 15 (planned) |
-| `06-critic-refiner` | Critic-refiner with a protected oracle | Who owns the oracle? | 16 (planned) |
-| `07-sidecar-guard` | Sidecar guard with a deterministic risk table | Which guard can nobody talk past? | 17 (planned) |
+| [`01-orchestrator-worker`](01-orchestrator-worker/) | A lead agent splits the job and hands pieces to workers | Does the lead earn its keep, and what happens when it's out? | 13 |
+| `02-pipeline-checkpoint` | Agents work in sequence, with a check between steps | When step 3 fails, whose problem is it? | 14 (planned) |
+| `03-fan-out-partial-reducer` | Many agents work in parallel, one merges their results | Who is responsible for the merge? | 14 (planned) |
+| `04-hierarchical` | Leads managing other leads | Should the agent layers match the team layers? | 15 (planned) |
+| `05-event-bus` | Agents react to messages on a shared channel | Who looks after the shared channel? | 15 (planned) |
+| `06-critic-refiner` | One agent writes, another critiques, against a fixed test | Who owns the test, and can the writer game it? | 16 (planned) |
+| `07-sidecar-guard` | A rule-based guard checks every action before it runs | Which safety check can no agent argue its way past? | 17 (planned) |
 
 ## Setup
 
 ```bash
 uv sync
-uv run pytest            # deterministic tests, no model calls
+uv run pytest            # runs the tests, no model calls
 ```
 
-Every folder uses the same thin client in [`src/topologies/model.py`](src/topologies/model.py), no agent framework, so you can map it onto your own harness. Two backends:
+There's no agent framework here. Every folder calls the models through one small client, [`src/topologies/model.py`](src/topologies/model.py), so the code is easy to copy into your own setup. It can call the models two ways:
 
-- `claude-cli` (default): headless Claude Code (`claude -p`), which runs on a Claude subscription. Tools, settings and MCP are off, so each call is one model turn. Claude Code adds a fixed prompt of a few hundred input tokens per call and turns thinking on for its models, and both show up in the token counts.
-- `anthropic-sdk`: the Anthropic Python SDK. Needs `ANTHROPIC_API_KEY`. Select it with `--backend anthropic-sdk` or `TOPOLOGIES_BACKEND=anthropic-sdk`.
+- **Claude Code** (default): runs `claude -p` headless, so it works on a Claude subscription. Tools and plugins are off, so each call is a single model reply. Claude Code adds a fixed prompt of a few hundred tokens to every call and turns on thinking, and both count toward the token numbers.
+- **Anthropic API**: uses the Anthropic Python SDK and needs `ANTHROPIC_API_KEY`. Turn it on with `--backend anthropic-sdk` or `TOPOLOGIES_BACKEND=anthropic-sdk`.
 
-Absolute token numbers depend on the backend. Comparisons inside a folder always hold the backend constant.
+Token counts will differ between the two. Every comparison inside a folder uses the same one throughout, so the comparisons hold either way.
 
 ## License
 

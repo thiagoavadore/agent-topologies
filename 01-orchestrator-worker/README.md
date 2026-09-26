@@ -1,55 +1,82 @@
 # 01 · Orchestrator-worker
 
-**Org question:** who owns the decomposition, and what happens when they are out?
+## The question
 
-A supervisor (the team lead) splits a risk review of eight service cards across workers, dispatches them, validates every returned payload against a strict JSON contract, and writes one summary for the CTO. The workers never talk to each other. In Team Topologies terms each worker is X-as-a-Service: a fixed input, a fixed output, no negotiation.
+In an orchestrator-worker setup, one "lead" agent splits a job into pieces and hands them to worker agents. The lead is the expensive part: it runs on the biggest model and makes an extra call. So does it earn its keep? And what happens to the team when the lead is out?
 
-## What the code shows
+## The short answer
 
-- **Router** (`route`): the supervisor sees only a one-paragraph description of each card and returns a plan: how many workers, which cards each gets, and a focus line.
-- **Strict contract** (`FINDINGS_SCHEMA`): every finding must name a card, one of eight categories, a severity and a quoted line. A payload that breaks the contract gets one retry, then it is not merged, and its cards are reported as not reviewed. Findings about cards outside the worker's brief are dropped and counted.
-- **Fan-out cap** (`apply_fan_out_cap`): if the router plans more workers than the cap, its subtasks are merged round-robin into `cap` workers. No card is dropped.
-- **Token ceiling** (`dispatch`): checked before each wave of workers. Once it is crossed, the remaining subtasks are skipped and named in the summary instead of silently disappearing.
-- **Deterministic fallback** (`fallback_plan`): if the router fails, returns an invalid plan, or names a card that does not exist, the cards are split alphabetically into contiguous chunks. The review never blocks on the lead.
+On this task, no. Splitting the work alphabetically, with no lead at all, found the same risks at the same cost as letting the lead decide. What did save money was capping the number of workers: two workers instead of four cost 36% fewer tokens and missed one risk in 60.
 
-The fixtures are eight fictional service cards (`fixtures/services/`) with twelve planted risks (`fixtures/planted.json`). Scoring matches exactly on (card, category).
+## The experiment
 
-## Run it
+The agents do a risk review:
 
-```bash
-uv sync
-uv run pytest                                          # every guard, scripted model, no network
-uv run 01-orchestrator-worker/run.py                   # one review, cap 3, trace on stderr
-uv run 01-orchestrator-worker/run.py --cap 0           # no fan-out cap
-uv run 01-orchestrator-worker/run.py --break-router    # kill the lead, watch the fallback
-uv run 01-orchestrator-worker/experiment.py --n 5      # the three arms below
-```
+- **The input:** eight short, fictional service descriptions ("cards") in [`fixtures/services/`](fixtures/services/). Twelve known risks are hidden in them, like a hardcoded key or an HTTP call with no timeout. The answer key is [`fixtures/planted.json`](fixtures/planted.json).
+- **The lead** (Claude Opus) reads a one-paragraph summary of each card and decides how many workers to use and which cards each one gets.
+- **The workers** (Claude Haiku) each review their cards and report findings in a fixed JSON format. They never talk to each other.
+- **The lead** then merges the findings into one summary for the CTO.
+- **Scoring:** a risk counts as found only if a worker names the right card and the right category.
 
-## Result
+Three versions, five runs each:
 
-Three arms, five runs each, interleaved, on 25 Sep 2026. Supervisor `claude-opus-5`, workers `claude-haiku-4-5`, both via headless Claude Code (`claude -p`). Tokens are input plus output across every call in the review, including Claude Code's fixed per-call prompt and the thinking tokens it turns on.
+1. **Uncapped:** the lead splits the work however it likes. It chose four workers every time.
+2. **Capped at two:** the lead still plans the split, but its plan gets squeezed into two workers.
+3. **No lead:** the lead is switched off and the cards are split alphabetically between two workers.
 
-| arm | n | workers | tokens per review, mean (min to max) | planted risks found |
-|---|---|---|---|---|
-| uncapped: the router's plan as is | 5 | 4 | 36,573 (26,379 to 41,999) | 60 of 60 |
-| fan-out cap of 2 | 5 | 2 | 23,278 (19,874 to 26,261) | 59 of 60 |
-| router killed, alphabetical split into 2 | 5 | 2 | 22,994 (18,538 to 26,897) | 59 of 60 |
+## Results
 
-- Capping fan-out at two workers cut tokens per review by 36% and missed one planted risk in 60.
-- Killing the router and splitting the cards alphabetically cost the same as the capped router and found the same number of risks. On this task, the lead's decomposition bought nothing measurable. Its measurable cost was the routing call itself, about 1,500 tokens.
-- The uncapped arm also reported more findings outside the planted set (3.6 per review against 1.0 and 0.8). Some are defensible, some are noise. Four workers produce more of both.
-- No payload broke the contract in any run, so the retry and not-merged paths are covered by the tests, not by this run.
+Run on 25 Sep 2026. Tokens count everything sent and received across the whole review.
 
-Full table: [`results/summary.md`](results/summary.md). Every run, with each worker's brief: [`results/runs.jsonl`](results/runs.jsonl). Supervisor and worker trace: [`results/trace.log`](results/trace.log).
+| Version | Workers | Tokens per review (average) | Risks found |
+|---|---|---|---|
+| Uncapped | 4 | 36,573 | 60 of 60 |
+| Capped at two | 2 | 23,278 | 59 of 60 |
+| No lead, alphabetical | 2 | 22,994 | 59 of 60 |
 
-### The ground truth was wrong the first time
+What this tells us:
 
-The first 15 runs ([`results/2026-09-25-v1-invalid-ground-truth.jsonl`](results/2026-09-25-v1-invalid-ground-truth.jsonl)) planted a missing timeout on an `httpx.Client()` call. `httpx` defaults to a 5-second timeout, so there was no risk to find. The capped workers that "missed" it in four of five runs were right, and the uncapped arm got credit for a false positive. The fixture now uses `requests.post` without a timeout, which does wait forever, and the table above is from a full re-run. The lesson belongs in the series too: whoever owns the answer key owns the result.
+- **Fewer workers is much cheaper.** Two workers cost about a third less than four, and runs varied little enough that the difference is real.
+- **The lead's plan made no measurable difference.** An alphabetical split did just as well. The only thing the lead added was its own planning call, about 1,500 tokens.
+- **More workers also means more noise.** The four-worker version reported about 3.6 findings per review that weren't on the answer key, against about one for the two-worker versions. Some of those were fair points, some weren't.
+- **The one missed risk proves nothing.** One miss in 60, with five runs per version, could easily be chance.
 
-One change after that re-run: the fake card-processor key in `payments-gateway.md` started with `sk_live_`, which GitHub's push protection blocks as a Stripe key. It now starts with `cp_live_`. One check run per arm on the changed fixture found all 12 planted risks ([`results/2026-09-25-key-prefix-check.jsonl`](results/2026-09-25-key-prefix-check.jsonl)).
+Raw data: [`results/summary.md`](results/summary.md) for the full table, [`results/runs.jsonl`](results/runs.jsonl) for every run, [`results/trace.log`](results/trace.log) for what the lead and workers actually said.
+
+## The answer key was wrong the first time
+
+In the first 15 runs, one planted risk was an `httpx` call with no timeout. But `httpx` has a 5-second timeout by default, so there was no risk there. The two-worker versions that "missed" it were right, and the four-worker version got credit for a false alarm. The fixture now uses a `requests` call, which really does wait forever, and everything was re-run. The old runs are kept in [`results/2026-09-25-v1-invalid-ground-truth.jsonl`](results/2026-09-25-v1-invalid-ground-truth.jsonl).
+
+The lesson: whoever writes the answer key decides the result.
+
+One smaller change after that: the fake key in `payments-gateway.md` started with `sk_live_`, which GitHub blocks as a real Stripe key. It now starts with `cp_live_`. One check run per version still found all 12 risks ([`results/2026-09-25-key-prefix-check.jsonl`](results/2026-09-25-key-prefix-check.jsonl)).
 
 ## Limits
 
-- n = 5 per arm, one task, eight small cards. The token difference is well outside the run-to-run spread. The recall difference (one risk in 60) is not.
-- Absolute tokens depend on the backend. With `--backend anthropic-sdk` there is no Claude Code prompt overhead and Haiku runs without thinking, so expect lower totals. Comparisons between arms hold the backend constant.
-- The workers here read and report. Workers that write, each in an isolated workspace, are the next variation.
+- One small task, five runs per version. Trust the cost difference, not the one missed risk.
+- The token counts include overhead from running the models through Claude Code (`claude -p`), which adds a fixed prompt to every call and turns on thinking. Through the Anthropic API directly (`--backend anthropic-sdk`) the numbers will be lower, but the comparison between versions still holds.
+- These workers only read and report. Workers that change things are the next experiment.
+
+## Run it yourself
+
+```bash
+uv sync
+uv run pytest                                          # tests every safety check, no model calls
+uv run 01-orchestrator-worker/run.py                   # one review, up to 3 workers
+uv run 01-orchestrator-worker/run.py --cap 0           # no limit on workers
+uv run 01-orchestrator-worker/run.py --break-router    # switch the lead off
+uv run 01-orchestrator-worker/experiment.py --n 5      # the full three-version experiment
+```
+
+## What's in the code
+
+Everything lives in [`orchestrator.py`](orchestrator.py). Besides the lead and the workers, it has four safety checks that any real setup needs:
+
+| Check | What it does | Where |
+|---|---|---|
+| Strict format | A worker's report must follow the JSON format exactly. A bad report gets one retry, then it's thrown out and its cards are listed as "not reviewed". Findings about cards the worker wasn't given are dropped. | `FINDINGS_SCHEMA` |
+| Worker cap | If the lead plans more workers than allowed, its plan is squeezed into fewer workers. No card gets dropped. | `apply_fan_out_cap` |
+| Token budget | Before each batch of workers, check the spend. Once over budget, the remaining work is skipped and named in the summary instead of silently lost. | `dispatch` |
+| Backup plan | If the lead fails or returns a bad plan, split the cards alphabetically instead. The review never waits on the lead. | `fallback_plan` |
+
+No worker report broke the format in the real runs, so the retry and throw-out paths are covered only by the tests.
