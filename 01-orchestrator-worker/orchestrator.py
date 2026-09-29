@@ -1,7 +1,6 @@
-"""Orchestrator-worker: a supervisor splits a risk review of service cards, dispatches workers,
-validates every payload against a strict contract, and synthesises one summary.
+"""Orchestrator-worker risk review: the lead plans (router call), workers review, the lead summarises (synthesis call).
 
-Guards: a fan-out cap, a per-request token ceiling, and a deterministic fallback plan when the router fails.
+Safety checks: strict JSON format, worker cap (fan-out cap), token budget (token ceiling), fallback plan.
 """
 
 import json
@@ -89,15 +88,21 @@ SYNTHESIS_SYSTEM = """You are the lead of a platform risk review, writing for th
 Summarise the validated findings in at most 150 words: the highest-severity risks first, each with its service.
 Name any service that was not reviewed, and say why. Do not add risks that are not in the findings."""
 
-FALLBACK_WORKERS = 3
+FALLBACK_WORKERS = 3  # used only when the router fails and no cap is set
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
 @dataclass
 class Guards:
-    fan_out_cap: int | None = 3
-    token_ceiling: int | None = 60_000
-    max_parallel: int = 4
+    fan_out_cap: int | None = 3  # max workers; None means no limit
+    token_ceiling: int | None = 60_000  # token budget per review; None means no limit
+    max_parallel: int = 4  # workers running at once, one "wave"
+
+    def __post_init__(self) -> None:
+        if self.fan_out_cap is not None and self.fan_out_cap < 1:
+            raise ValueError(f"fan_out_cap must be at least 1 or None, got {self.fan_out_cap}")
+        if self.max_parallel < 1:
+            raise ValueError(f"max_parallel must be at least 1, got {self.max_parallel}")
 
 
 @dataclass
@@ -116,7 +121,7 @@ class WorkerResult:
     attempts: int = 0
     tokens: int = 0
     findings: list[dict] = field(default_factory=list)
-    out_of_brief: int = 0
+    out_of_brief: int = 0  # findings about cards this worker wasn't given, dropped
     error: str = ""
 
 
@@ -141,7 +146,7 @@ class RouterFailure(Exception):
 
 
 class TokenLedger:
-    """Thread-safe running total, because workers in a wave finish concurrently."""
+    """Thread-safe running token total, because parallel workers finish at the same time."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -162,7 +167,10 @@ def log(message: str) -> None:
 
 
 def load_cards(services_dir: Path) -> dict[str, str]:
-    return {path.name: path.read_text() for path in sorted(services_dir.glob("*.md"))}
+    cards = {path.name: path.read_text() for path in sorted(services_dir.glob("*.md"))}
+    if not cards:
+        raise ValueError(f"no service cards (*.md) in {services_dir}")
+    return cards
 
 
 def extract_json(text: str) -> dict:
@@ -173,12 +181,15 @@ def extract_json(text: str) -> dict:
 
 
 def describe_card(text: str) -> str:
-    """The router sees only each card's 'What it does' paragraph, not the whole card."""
+    """Return the card's 'What it does' paragraph, the only part the lead sees when planning."""
     match = re.search(r"## What it does\s*\n(.+?)(?:\n\n|\Z)", text, re.DOTALL)
-    return match.group(1).strip() if match else text.splitlines()[0]
+    if match:
+        return match.group(1).strip()
+    return text.splitlines()[0] if text.strip() else "(empty card)"
 
 
 def route(backend: Backend, model: str, cards: dict[str, str], ledger: TokenLedger) -> list[Subtask]:
+    """Ask the lead for a plan; raise RouterFailure if the call fails or the plan is unusable."""
     listing = "\n".join(f"- {name}: {describe_card(text)}" for name, text in cards.items())
     try:
         reply = backend.call(model=model, system=ROUTER_SYSTEM, prompt=f"Service cards to review:\n{listing}")
@@ -232,7 +243,14 @@ def worker_prompt(subtask: Subtask, cards: dict[str, str]) -> str:
     return f"Focus: {subtask.focus}\n\n{bodies}"
 
 
-def run_worker(backend: Backend, model: str, subtask: Subtask, cards: dict[str, str], ledger: TokenLedger) -> WorkerResult:
+def run_worker(
+    backend: Backend,
+    model: str,
+    subtask: Subtask,
+    cards: dict[str, str],
+    ledger: TokenLedger,
+) -> WorkerResult:
+    """Review one subtask, retrying once if the reply breaks FINDINGS_SCHEMA."""
     system = WORKER_SYSTEM.format(categories="\n".join(f"- {key}: {text}" for key, text in CATEGORIES.items()))
     prompt = worker_prompt(subtask, cards)
     result = WorkerResult(subtask_id=subtask.id, files=subtask.files, focus=subtask.focus, status="invalid")
@@ -250,7 +268,11 @@ def run_worker(backend: Backend, model: str, subtask: Subtask, cards: dict[str, 
             jsonschema.validate(payload, FINDINGS_SCHEMA)
         except (ValueError, jsonschema.ValidationError) as error:
             result.error = str(error)[:300]
-            prompt = f"{worker_prompt(subtask, cards)}\n\nYour previous reply broke the contract: {result.error}\nReply again with valid JSON only."
+            prompt = (
+                f"{worker_prompt(subtask, cards)}\n\n"
+                f"Your previous reply broke the contract: {result.error}\n"
+                "Reply again with valid JSON only."
+            )
             continue
         in_brief = [finding for finding in payload["findings"] if finding["file"] in subtask.files]
         result.out_of_brief = len(payload["findings"]) - len(in_brief)
@@ -259,27 +281,43 @@ def run_worker(backend: Backend, model: str, subtask: Subtask, cards: dict[str, 
     return result
 
 
-def dispatch(backend: Backend, model: str, subtasks: list[Subtask], cards: dict[str, str], guards: Guards, ledger: TokenLedger) -> tuple[list[WorkerResult], bool]:
-    """Run workers in waves of `max_parallel`; the token ceiling is checked before each wave starts."""
+def dispatch(
+    backend: Backend,
+    model: str,
+    subtasks: list[Subtask],
+    cards: dict[str, str],
+    guards: Guards,
+    ledger: TokenLedger,
+) -> tuple[list[WorkerResult], bool]:
+    """Run workers in waves of `max_parallel`, checking the token ceiling before each wave.
+
+    The ceiling is soft: a wave that starts under it can finish over it.
+    """
     results, ceiling_hit = [], False
     for start in range(0, len(subtasks), guards.max_parallel):
         wave = subtasks[start: start + guards.max_parallel]
         if guards.token_ceiling is not None and ledger.total >= guards.token_ceiling:
             ceiling_hit = True
             log(f"[ceiling] {ledger.total} >= {guards.token_ceiling} tokens, skipping {len(subtasks) - start} subtask(s)")
-            results.extend(WorkerResult(subtask_id=s.id, files=s.files, focus=s.focus, status="skipped_ceiling") for s in subtasks[start:])
+            results.extend(
+                WorkerResult(subtask_id=subtask.id, files=subtask.files, focus=subtask.focus, status="skipped_ceiling")
+                for subtask in subtasks[start:]
+            )
             break
         with ThreadPoolExecutor(max_workers=len(wave)) as pool:
             wave_results = list(pool.map(lambda s: run_worker(backend, model, s, cards, ledger), wave))
         for result in wave_results:
             note = f", dropped {result.out_of_brief} out-of-brief finding(s)" if result.out_of_brief else ""
-            log(f"[worker {result.subtask_id}] {result.status}: {len(result.findings)} finding(s) on {len(result.files)} card(s), {result.attempts} attempt(s){note}")
+            log(
+                f"[worker {result.subtask_id}] {result.status}: {len(result.findings)} finding(s) "
+                f"on {len(result.files)} card(s), {result.attempts} attempt(s){note}"
+            )
         results.extend(wave_results)
     return results, ceiling_hit
 
 
 def merge_findings(results: list[WorkerResult]) -> list[dict]:
-    """One finding per (file, category), keeping the highest severity."""
+    """Keep one finding per (card, category), at its highest severity."""
     best: dict[tuple[str, str], dict] = {}
     for result in results:
         for finding in result.findings:
@@ -289,16 +327,38 @@ def merge_findings(results: list[WorkerResult]) -> list[dict]:
     return sorted(best.values(), key=lambda f: (-SEVERITY_RANK[f["severity"]], f["file"], f["category"]))
 
 
-def synthesise(backend: Backend, model: str, findings: list[dict], uncovered: list[str], ceiling_hit: bool, guards: Guards, ledger: TokenLedger) -> str:
+def synthesise(
+    backend: Backend,
+    model: str,
+    findings: list[dict],
+    uncovered: list[str],
+    ceiling_hit: bool,
+    guards: Guards,
+    ledger: TokenLedger,
+) -> str:
+    """Ask the lead for the CTO summary, or write a plain one if over budget or the call fails."""
+    counts = f"{len(findings)} validated finding(s); not reviewed: {', '.join(uncovered) or 'none'}."
     if ceiling_hit or (guards.token_ceiling is not None and ledger.total >= guards.token_ceiling):
-        return f"Token ceiling reached: {len(findings)} validated finding(s); not reviewed: {', '.join(uncovered) or 'none'}."
+        return f"Token ceiling reached: {counts}"
     prompt = json.dumps({"findings": findings, "not_reviewed": uncovered}, indent=1)
-    reply = backend.call(model=model, system=SYNTHESIS_SYSTEM, prompt=prompt)
+    try:
+        reply = backend.call(model=model, system=SYNTHESIS_SYSTEM, prompt=prompt)
+    except Exception as error:
+        log(f"[supervisor] synthesis failed: {error}")
+        return f"Synthesis failed ({str(error)[:200]}): {counts}"
     ledger.add("synthesis", reply.total_tokens)
     return reply.text.strip()
 
 
-def run_review(services_dir: Path, backend: Backend, supervisor_model: str, worker_model: str, guards: Guards, break_router: bool = False) -> RunRecord:
+def run_review(
+    services_dir: Path,
+    backend: Backend,
+    supervisor_model: str,
+    worker_model: str,
+    guards: Guards,
+    break_router: bool = False,
+) -> RunRecord:
+    """Run one full review: plan, cap, dispatch workers, merge findings, summarise."""
     cards = load_cards(services_dir)
     ledger = TokenLedger()
 

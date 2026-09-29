@@ -14,9 +14,9 @@ HERE = Path(__file__).parent
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cap", type=int, default=3, help="fan-out cap; 0 disables it")
-    parser.add_argument("--ceiling", type=int, default=60_000, help="token ceiling per request; 0 disables it")
-    parser.add_argument("--break-router", action="store_true", help="kill the router to exercise the fallback plan")
+    parser.add_argument("--cap", type=int, default=3, help="max workers (fan-out cap); 0 means no limit")
+    parser.add_argument("--ceiling", type=int, default=60_000, help="token budget per review; 0 means no limit")
+    parser.add_argument("--break-router", action="store_true", help="skip the lead's plan and use the alphabetical fallback")
     parser.add_argument("--backend", default=None, help="claude-cli (default) or anthropic-sdk")
     parser.add_argument("--supervisor-model", default="claude-opus-5")
     parser.add_argument("--worker-model", default="claude-haiku-4-5")

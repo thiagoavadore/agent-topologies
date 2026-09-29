@@ -1,14 +1,15 @@
-"""Run the three arms n times each, interleaved, append every run to a JSONL file, and print the table.
+"""Run each arm (a README "version") n times, append every run to a JSONL file, and print the table.
 
 Arms:
-  uncapped      the router's plan runs as is
-  cap2          fan-out cap of 2 workers
-  router-killed router skipped, deterministic fallback into 2 workers (isolates what the router buys)
+  uncapped      "Uncapped": the router's plan runs as is
+  cap2          "Capped at two": fan-out cap of 2 workers
+  router-killed "No lead plan": router skipped, alphabetical fallback into 2 workers
 """
 
 import argparse
 import datetime as dt
 import json
+import os
 import statistics
 import time
 from pathlib import Path
@@ -25,7 +26,26 @@ ARMS = {
 }
 
 
-def run_arms(n: int, arms: list[str], out: Path, backend_name: str | None, supervisor_model: str, worker_model: str) -> None:
+def worker_row(worker: dict) -> dict:
+    return {
+        "subtask_id": worker["subtask_id"],
+        "files": worker["files"],
+        "focus": worker["focus"],
+        "status": worker["status"],
+        "tokens": worker["tokens"],
+        "findings": len(worker["findings"]),
+    }
+
+
+def run_arms(
+    n: int,
+    arms: list[str],
+    out: Path,
+    backend_name: str | None,
+    supervisor_model: str,
+    worker_model: str,
+) -> None:
+    backend_name = backend_name or os.environ.get("TOPOLOGIES_BACKEND", "claude-cli")
     backend = backend_from_name(backend_name)
     planted = load_planted()
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -33,12 +53,19 @@ def run_arms(n: int, arms: list[str], out: Path, backend_name: str | None, super
         for arm in arms:
             config = ARMS[arm]
             started = time.monotonic()
-            record = run_review(HERE / "fixtures" / "services", backend, supervisor_model, worker_model, config["guards"], config["break_router"])
+            record = run_review(
+                HERE / "fixtures" / "services",
+                backend,
+                supervisor_model,
+                worker_model,
+                config["guards"],
+                config["break_router"],
+            )
             row = {
                 "at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
                 "arm": arm,
                 "run": index + 1,
-                "backend": backend_name or "claude-cli",
+                "backend": backend_name,
                 "supervisor_model": supervisor_model,
                 "worker_model": worker_model,
                 "wall_seconds": round(time.monotonic() - started, 1),
@@ -47,18 +74,26 @@ def run_arms(n: int, arms: list[str], out: Path, backend_name: str | None, super
                 "dispatched_workers": record.dispatched_workers,
                 "tokens_by_role": record.tokens_by_role,
                 "total_tokens": record.total_tokens,
-                "invalid_payloads": sum(1 for worker in record.workers if worker["status"] != "ok"),
+                "invalid_payloads": sum(1 for worker in record.workers if worker["status"] == "invalid"),
+                "worker_errors": sum(1 for worker in record.workers if worker["status"] == "error"),
                 "retries": sum(worker["attempts"] - 1 for worker in record.workers if worker["attempts"]),
                 "out_of_brief": sum(worker["out_of_brief"] for worker in record.workers),
-                "workers": [{key: worker[key] for key in ("subtask_id", "files", "focus", "status", "tokens")} | {"findings": len(worker["findings"])} for worker in record.workers],
+                "workers": [worker_row(worker) for worker in record.workers],
                 "score": score(record.findings, planted),
             }
             with out.open("a") as handle:
                 handle.write(json.dumps(row) + "\n")
-            print(f"== {arm} run {index + 1}: {row['total_tokens']} tokens, recall {row['score']['planted_found']}/{row['score']['planted']}, {row['dispatched_workers']} workers", flush=True)
+            print(
+                f"== {arm} run {index + 1}: {row['total_tokens']} tokens, "
+                f"recall {row['score']['planted_found']}/{row['score']['planted']}, "
+                f"{row['dispatched_workers']} workers",
+                flush=True,
+            )
 
 
 def summarise(path: Path) -> str:
+    if not path.exists():
+        return f"No runs at {path}."
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     lines = [
         "| arm | n | workers (planned → dispatched) | total tokens, mean (min to max) | router + synthesis tokens, mean | recall, mean (min) | extra findings, mean | invalid payloads | wall s, mean |",
@@ -92,8 +127,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--n", type=int, default=5)
     parser.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ARMS))
-    parser.add_argument("--out", type=Path, default=HERE / "results" / "runs.jsonl")
-    parser.add_argument("--backend", default=None)
+    # Not results/runs.jsonl, so new runs never mix into the published data.
+    parser.add_argument("--out", type=Path, default=HERE / "results" / "local-runs.jsonl")
+    parser.add_argument("--backend", default=None, help="claude-cli (default) or anthropic-sdk")
     parser.add_argument("--supervisor-model", default="claude-opus-5")
     parser.add_argument("--worker-model", default="claude-haiku-4-5")
     parser.add_argument("--summarise-only", action="store_true")

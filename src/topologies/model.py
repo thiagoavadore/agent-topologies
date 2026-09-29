@@ -1,8 +1,9 @@
-"""One thin model client with swappable backends, so every topology folder shares the same call shape."""
+"""A small model client with swappable backends, so every folder calls models the same way."""
 
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from typing import Callable, Protocol
@@ -27,8 +28,7 @@ class Backend(Protocol):
 class ClaudeCliBackend:
     """Headless Claude Code (`claude -p`): runs on a Claude subscription, no API key needed.
 
-    Tools, settings, MCP servers and session files are switched off so a call is one model turn.
-    Claude Code still adds a fixed prompt overhead of a few hundred input tokens per call.
+    Claude Code still adds a fixed prompt of a few hundred input tokens to every call.
     """
 
     def call(self, *, model: str, system: str, prompt: str) -> Reply:
@@ -47,16 +47,23 @@ class ClaudeCliBackend:
             completed = subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=600)
         if completed.returncode != 0:
             raise RuntimeError(f"claude -p failed ({completed.returncode}): {completed.stderr.strip()[:500]}")
-        payload = json.loads(completed.stdout)
+        try:
+            payload = json.loads(completed.stdout)
+            usage = payload["usage"]
+        except (ValueError, KeyError) as error:
+            raise RuntimeError(f"claude -p output unreadable: {completed.stdout[:300]}") from error
         if payload.get("is_error"):
             raise RuntimeError(f"claude -p returned an error: {payload.get('result')}")
-        usage = payload["usage"]
         input_tokens = (
             usage["input_tokens"]
-            + usage.get("cache_creation_input_tokens", 0)
-            + usage.get("cache_read_input_tokens", 0)
+            + (usage.get("cache_creation_input_tokens") or 0)
+            + (usage.get("cache_read_input_tokens") or 0)
         )
-        return Reply(text=payload["result"], input_tokens=input_tokens, output_tokens=usage["output_tokens"], model=model)
+        output_tokens = usage["output_tokens"]
+        # One published run recorded a worker at 0 tokens; say so instead of counting it as free.
+        if input_tokens == 0 or output_tokens == 0:
+            print(f"[warning] claude -p reported {input_tokens} input / {output_tokens} output tokens", file=sys.stderr, flush=True)
+        return Reply(text=payload["result"], input_tokens=input_tokens, output_tokens=output_tokens, model=model)
 
 
 class AnthropicSdkBackend:

@@ -10,9 +10,14 @@ PLANTED_PATH = Path(__file__).parent / "fixtures" / "planted.json"
 
 def load_planted(path: Path = PLANTED_PATH) -> set[tuple[str, str]]:
     planted = {(item["file"], item["category"]) for item in json.loads(path.read_text())["planted"]}
+    if not planted:
+        raise ValueError(f"{path.name} has no planted risks")
     unknown = {category for _, category in planted} - set(CATEGORIES)
     if unknown:
         raise ValueError(f"planted.json uses categories the worker contract does not know: {sorted(unknown)}")
+    missing = {file for file, _ in planted if not (path.parent / "services" / file).exists()}
+    if missing:
+        raise ValueError(f"planted.json names cards that don't exist: {sorted(missing)}")
     return planted
 
 
