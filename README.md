@@ -4,7 +4,7 @@ When several AI agents work on one job, someone has to decide how the work is sp
 
 It's the companion code for the series "Agent topologies are org charts" in [The Recovering CTO](https://writing.tilinthecloud.com). Each folder is one setup, runs on its own, and has a README with the question, the experiment and the result.
 
-| Folder | The setup | The question it tests | Issue |
+| Folder | The setup | The question it tests | Newsletter issue |
 |---|---|---|---|
 | [`01-orchestrator-worker`](01-orchestrator-worker/) | A lead agent splits the job and hands pieces to workers | Does the lead earn its keep, and what happens when it's out? | 13 |
 | `02-pipeline-checkpoint` | Agents work in sequence, with a check between steps | When step 3 fails, whose problem is it? | 14 (planned) |
@@ -24,9 +24,9 @@ uv run pytest            # runs the tests, no model calls
 There's no agent framework here. Every folder calls the models through one small client, [`src/topologies/model.py`](src/topologies/model.py), so the code is easy to copy into your own setup. It can call the models two ways:
 
 - **Claude Code** (default): runs `claude -p` headless, so it works on a Claude subscription. Tools and plugins are off, so each call is a single model reply. Claude Code adds a fixed prompt of a few hundred tokens to every call and turns on thinking, and both count toward the token numbers.
-- **Anthropic API**: uses the Anthropic Python SDK and needs `ANTHROPIC_API_KEY`. Turn it on with `--backend anthropic-sdk` or `TOPOLOGIES_BACKEND=anthropic-sdk`.
+- **Anthropic API**: uses the Anthropic Python SDK and needs `ANTHROPIC_API_KEY` (or an `ant auth login` profile). Turn it on with `--backend anthropic-sdk` or `TOPOLOGIES_BACKEND=anthropic-sdk`.
 
-Token counts will differ between the two. Every comparison inside a folder uses the same one throughout, so the comparisons hold either way.
+Token counts will differ between the two. Every comparison inside a folder uses one backend throughout. Claude Code's overhead is per call, though, so setups that make more calls pay more of it.
 
 ## License
 
