@@ -1,0 +1,11 @@
+# Shared platform defaults, read by every service. A card inherits a key unless it states its own `Override: <key> = <value>` line.
+# Longest wait, in seconds or milliseconds, on any outbound call.
+http.default_timeout: 300ms
+# Requests per second that each service allows from one caller, or "none" for no limit.
+http.default_rate_limit: 20/s
+# Snapshot schedule for data a service stores on its own disk or VM, e.g. "daily, 30d retention", or "none".
+backup.policy: none
+# How services pin dependency versions: "exact", "lockfile" or "none".
+dependencies.pinning: none
+# Fewest running instances any service may have.
+availability.min_instances: 1
