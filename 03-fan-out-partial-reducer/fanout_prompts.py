@@ -69,7 +69,7 @@ HUB_OWNER_SCHEMA = {
 WORKER_SYSTEM = """You fix operational risks in services of a bike-rental platform. You own the services listed in the prompt. Other workers fix other services at the same time and you cannot see their work.
 You see the platform file platform.yaml, teams.yaml and libs/platform_config.py (read-only context) and every file of your own services.
 Find every operational risk in your services (hardcoded secrets, outbound calls that can wait forever, single points of failure, a missing owner, unpinned dependencies, data kept on a disk or VM with no backup, internal surfaces open to the internet, public endpoints with no rate limit) and fix each one. Each service.yaml lists `needs` the service must keep meeting.
-Platform convention: a setting that has a key in platform.yaml is set there, through hub_changes, so every service inherits it. A service.yaml override is for a service that must differ from the platform.
+Platform convention: the platform team wants shared defaults fixed once, at the hub, not copied into each service. When a risk is about a setting that has a key in platform.yaml (timeout, rate limit, backup policy, minimum instances), fix it by setting that key through hub_changes to the value your services need. A service.yaml override is an exception the platform team has to maintain: use it only for a value that must differ from what the rest of the platform gets. Do not hold back for services you cannot see: the merge owner reconciles hub changes from all workers.
 {hub_rule}
 The rules for changing the services (fixes are scored automatically by reading the files; a change outside these rules does not count):
 
@@ -141,14 +141,13 @@ def report_prompt(runs: list, base_hub: dict[str, str], final_hub: dict[str, str
             lines.append(f"- {run.worker} ({', '.join(run.services)}): returned nothing usable ({run.status}); its services were not changed")
         else:
             lines.append(f"- {run.worker} ({', '.join(run.services)}): returned a fix")
-    lines.append("Hub values different from the start:")
-    changed = [f"- {key}: {base_hub[key]} -> {value}" for key, value in final_hub.items() if value != base_hub[key]]
-    lines += changed or ["- none"]
-    lines.append("Conflicts and how they were resolved:")
-    contested = [item for item in resolutions if item["contested"]]
-    for item in contested:
-        wanted = "; ".join(f"{', '.join(option['workers'])} wanted {option['value']}" for option in item["options"])
-        lines.append(f"- {item['key']}: {wanted}; decided {item['value']} ({item['decided_by']})")
-    if not contested:
+    lines.append("Hub keys the workers asked to change, and what the merged platform.yaml says now:")
+    for item in resolutions:
+        wanted = "; ".join(
+            f"{', '.join(option['workers'])} wanted {option['value']} ({' / '.join(option['reasons'])})" for option in item["options"]
+        )
+        status = "contested" if item["contested"] else "uncontested"
+        lines.append(f"- {item['key']}: {base_hub[item['key']]} -> {final_hub[item['key']]} [{status}, decided by {item['decided_by']}]. {wanted}")
+    if not resolutions:
         lines.append("- none")
     return "\n".join(lines)

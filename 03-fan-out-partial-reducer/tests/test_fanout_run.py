@@ -229,3 +229,12 @@ def test_all_arms_run_and_the_score_is_the_checkers(tmp_path):
     for arm in ARMS:
         record = run(arm, Script(colliding_payloads()), ask=lambda _: "a", show=lambda _: None, workdir=tmp_path / arm)
         assert check(tmp_path / arm / "merged").fixed == record["score"]["fixed"]
+
+
+def test_report_prompt_carries_who_asked_for_each_hub_change_and_why():
+    script = Script(colliding_payloads())
+    run("first-wins", script)
+    [prompt] = script.prompts_for("report")
+    assert "backup.policy: none -> daily/30d [uncontested" in prompt and "profiles has no backup" in prompt
+    assert "http.default_timeout" in prompt and "[contested, decided by first-wins]" in prompt
+    assert "charges take up to 12 s" in prompt and "the SMTP relay is slow" in prompt
