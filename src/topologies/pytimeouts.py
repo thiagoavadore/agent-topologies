@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from topologies.harbour import OutsideContract
+from topologies.harbour import FIXTURE, OutsideContract
 
 HUB_MODULE = "platform_config"
 HUB_FUNCTION = "http_timeout"
@@ -174,6 +174,33 @@ def call_name(call: ast.Call) -> str | None:
     return None
 
 
+def is_os_environ(node: ast.AST) -> bool:
+    return isinstance(node, ast.Attribute) and node.attr == "environ" and isinstance(node.value, ast.Name) and node.value.id == "os"
+
+
+def environment_reads(tree: ast.Module) -> set[str]:
+    """Environment variables the module reads, by literal name; "<dynamic>" for any other kind of read."""
+    reads, understood = set(), set()
+
+    def literal(arguments: list[ast.expr]) -> str:
+        first = arguments[0] if arguments else None
+        return first.value if isinstance(first, ast.Constant) and isinstance(first.value, str) else "<dynamic>"
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and is_os_environ(node.value):
+            reads.add(literal([node.slice]))
+            understood.add(id(node.value))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" and is_os_environ(node.func.value):
+            reads.add(literal(node.args))
+            understood.add(id(node.func.value))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "getenv":
+            reads.add(literal(node.args))
+        elif isinstance(node, ast.ImportFrom) and node.module == "os" and {"environ", "getenv"} & {alias.name for alias in node.names}:
+            reads.add("<dynamic>")
+    reads |= {"<dynamic>" for node in ast.walk(tree) if is_os_environ(node) and id(node) not in understood}
+    return reads
+
+
 def attempts_around(function: ast.FunctionDef, call: ast.Call) -> int:
     """Multiply the counts of `for _ in range(N)` loops around the call; any other loop is outside the contract."""
     attempts = 1
@@ -203,6 +230,10 @@ def static_timeout(source: str, site: CallSite, hub_timeout: Callable[[], float]
     if len(functions) != 1:
         raise OutsideContract(f"expected one module-level {site.function}(), found {len(functions)}")
     function = functions[0]
+    canonical = ast.parse((FIXTURE / site.service / f"{site.module}.py").read_text(encoding="utf-8"))
+    new_reads = sorted(environment_reads(tree) - environment_reads(canonical))
+    if new_reads:
+        raise OutsideContract(f"{site.module}.py reads new environment variables: {', '.join(new_reads)}")
     if function.decorator_list:
         raise OutsideContract(f"{site.function}() is decorated; a decorator can retry or change the call")
     calls = [node for node in ast.walk(function) if isinstance(node, ast.Call) and call_name(node) in site.call_names]

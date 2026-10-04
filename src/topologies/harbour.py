@@ -27,7 +27,6 @@ HUB_KEYS = (
     "http.default_timeout",
     "http.default_rate_limit",
     "backup.policy",
-    "dependencies.pinning",
     "availability.min_instances",
 )
 

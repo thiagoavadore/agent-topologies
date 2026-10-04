@@ -54,7 +54,6 @@ def test_hub_starts_with_the_designed_values():
         "http.default_timeout: 300ms",
         "http.default_rate_limit: none",
         "backup.policy: none",
-        "dependencies.pinning: none",
         "availability.min_instances: 1",
     ):
         assert f"\n{line}\n" in hub
@@ -590,7 +589,7 @@ REJECTION_REASONS = {
     'timeout=None': 'charge() still has no timeout',
     'undefined timeout variable': '`PAYMENTS_TIMEOUT` is not defined',
     'timeout constant reassigned to None': 'outside contract: `TIMEOUT` is bound 2 times in the module; a constant is assign',
-    'timeout from an environment variable': "outside contract: `float(os.environ.get('PAY_TIMEOUT', 15))` is not a literal, a",
+    'timeout from an environment variable': 'outside contract: bookings_api.py reads new environment variables: PAY_TIMEOUT',
     'timeout below the need': '5 s per attempt is below bookings-api.payment_call_timeout minimum 12s',
     'timeout far above the need': '1 x 1e+06 s is above bookings-api.payment_call_timeout maximum 25s',
     'endless retry loop around the call': 'outside contract: the call is retried by a loop other than `for _ in range(<numb',
@@ -616,7 +615,7 @@ REJECTION_REASONS = {
     "secret pasted into another service's existing file": 'a card processor key is still in notifications/notifications.py',
     'secret base64-encoded in a comment': 'a card processor key is still in payments-gateway/main.go',
     'secret split into three string pieces': 'a card processor key is still in payments-gateway/main.go',
-    'unrelated environment variable read, key never set': 'api_key is gone from config.yaml but main.go never sets APIKey from the environm',
+    'unrelated environment variable read, key never set': 'outside contract: main.go reads environment variables other than the key',
     'key read through a variable name': 'outside contract: main.go reads the key from the environment, but not as os.Gete',
     'secret in a file under .git': 'a card processor key is still in .git/key',
     'retries in a decorator': 'outside contract: charge() is decorated; a decorator can retry or change the cal',
@@ -626,7 +625,7 @@ REJECTION_REASONS = {
     'timeout as a (connect, read) tuple': 'outside contract: `(20, 20)` is not a literal, a constant or http_timeout(<servi',
     'timeout as a parameter default': 'outside contract: `timeout` in charge() is not a constant assignment (parameter,',
     'hub helper imported inside the function': "outside contract: `http_timeout('bookings-api')` needs `from platform_config imp",
-    'module reads an environment variable at import': "running send_email() failed: KeyError: 'SMTP_HOST'",
+    'module reads an environment variable at import': 'outside contract: notifications.py reads new environment variables: SMTP_HOST',
     'backup as words with days spelled out': "outside contract: 'daily/30 days' is not a backup policy (e.g. daily/30d, none)",
     'terraform variables file overriding the default': 'outside contract: admin-console/terraform.tfvars.json was added; workers may onl',
     'world opened by a second rule in the same file': 'aws_vpc_security_group_ingress_rule.open still admits 0.0.0.0/0',
@@ -703,6 +702,8 @@ REJECTION_REASONS = {
 }
 # Fakes that use a form the worker contract excludes; every other fake is inside the contract and simply not fixed.
 OUTSIDE_CONTRACT = {
+    'unrelated environment variable read, key never set',
+    'module reads an environment variable at import',
     'retry adapter imported at module top',
     'timeout constant reassigned to None',
     'timeout from an environment variable',
@@ -808,7 +809,7 @@ def test_result_does_not_depend_on_the_caller_environment(repo, monkeypatch):
     monkeypatch.setenv("SMTP_HOST", "smtp.example")
     monkeypatch.setenv("PYTHONPATH", "/nowhere")
     assert check(repo).risks["notifications.missing_timeout"] == unset
-    assert not unset.fixed
+    assert unset.outside_contract and "reads new environment variables: SMTP_HOST" in unset.reason
 
 
 def test_harness_files_are_not_contract_breaches(repo):
@@ -822,7 +823,7 @@ def test_harness_files_are_not_contract_breaches(repo):
 
 def test_contract_text_names_every_rule_family():
     contract = worker_contract()
-    for phrase in ("Do not add, delete or rename files", "timeout=", "os.Getenv", "network.tf.json", "name==version", "PLATFORM_HTTP_TIMEOUT"):
+    for phrase in ("Do not add, delete or rename files", "timeout=", "os.Getenv", "network.tf.json", "name==version", "PLATFORM_HTTP_TIMEOUT", "Read no new environment variables"):
         assert phrase in contract
 
 

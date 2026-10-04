@@ -24,6 +24,7 @@ Needs work the same way: `NeedResult.regressed`, plus `outside_contract` when th
 | Secret from `${NAME}` in config or `cfg.Processor.APIKey = os.Getenv("NAME")` | YAML plus comment-stripped Go; `os.Getenv(variable)` is outside contract |
 | Terraform JSON only; CIDRs literal or `${var.x}`/`${local.x}` with a literal value | `.tf` HCL, unknown blocks, prefix lists and other expressions are outside contract |
 | Pins in the manifest; no pip option lines | `-r`/`-c`/`--hash` and lines that are not requirements are outside contract |
+| No new environment reads, except the secret's named variable | Python: every `os.environ[...]`, `os.environ.get`, `os.getenv` or other `os.environ` use in `bookings_api.py` / `notifications.py` is compared with the pristine module, before anything runs; a new or non-literal read is outside contract. Go: any `os.Getenv`/`os.LookupEnv` in `main.go` other than the one assigned to `APIKey` is outside contract |
 | Keep pricing-engine's `PLATFORM_HTTP_TIMEOUT` line | Exact line present in `pricing-engine/src/index.js`, else the pricing need is regressed, outside contract |
 
 ## Settings: where a value comes from
@@ -33,7 +34,6 @@ Needs work the same way: `NeedResult.regressed`, plus `outside_contract` when th
 | `http.default_timeout`, `http.default_rate_limit` | The service's `overrides:` entry, else `platform.yaml` |
 | Backup | The service's `backup:` field, else `platform.yaml` `backup.policy` (`null` inherits; `none` opts out) |
 | Instances | The larger of the service's `instances:` and `platform.yaml` `availability.min_instances` |
-| `dependencies.pinning` | Not read: a build policy does not pin a manifest |
 
 Formats: durations need a unit (`300ms`, `12s`); rates are `N/s`, `N/min` or `none`; backup is `hourly|daily|weekly/<days>d` or `none`. Anything else is outside contract. Zero is readable but never meets a need.
 
@@ -75,6 +75,7 @@ Values live in each service's `service.yaml` (`needs:`) with the reason beside t
 What the checker still cannot judge, so a reader can discount the numbers.
 
 - **The contract narrows what counts.** An honest fix outside it (a helper function, a `(connect, read)` tuple, a parameter default, a `TimeoutHTTPAdapter`, a lockfile, a new file such as `terraform.tfvars.json` or a `.env.example`) scores "outside contract". Workers get the contract in their prompt; the outside-contract count is reported per run so its size is visible.
+- **Environment reads are enforced where code is scored**: `bookings_api.py`, `notifications.py` and `main.go`. A new `process.env` read in pricing-engine's JavaScript, or one in the Rust, Kotlin or Ruby files, breaks the contract but is not detected.
 - **Go is not compiled.** The env-read check finds `os.ExpandEnv(` or `.APIKey = os.Getenv("NAME")` in comment-stripped `main.go`; it does not prove the processor client uses that field.
 - **Secret obfuscation.** A key reversed, hex-encoded, or split so that the `cp_live_` prefix itself is broken up would pass. The key also stays in git history; rotation is out of scope.
 - **The regression needs are read from configuration.** pricing-engine's JavaScript is checked only for the one line that reads the platform value; payments-gateway's Go is not read at all, so a limiter added in code would not be seen.
@@ -85,5 +86,5 @@ What the checker still cannot judge, so a reader can discount the numbers.
 - **Single point of failure is an instance count.** Two instances in one zone, a broker with no standby, or two cron schedulers double-running the nightly job all pass.
 - **Backup is a policy.** Restores are not tested.
 - **Exposure is security-group CIDRs.** Load balancers, WAF and SSO are not considered, and a narrow public allowlist (an office IP) counts as not fixed by design.
-- **Pins are syntax plus the original range.** Whether a version exists on the registry is not checked; `dependencies.pinning` in the hub has no score effect.
+- **Pins are syntax plus the original range.** Whether a version exists on the registry is not checked.
 - **The bounds are the authors' choices.** The maxima (25 s, 20 s, 50/s) and the 2/s floor reject absurd values; they are pre-registered, not measured.

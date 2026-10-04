@@ -267,8 +267,12 @@ def payments_secret(repo: Repo) -> str:
     assigned = re.findall(r'\.APIKey\s*=\s*os\.Getenv\("([A-Za-z_][A-Za-z0-9_]*)"\)', main_go)
     if assigned and api_key in (None, ""):
         return f"main.go sets APIKey from {assigned[0]} in the environment"
-    if re.search(r"\.APIKey\s*=\s*os\.(?:Getenv|LookupEnv)\(", main_go):
+    if re.search(r"\.APIKey\s*=\s*os\.(?:Getenv|LookupEnv)\(", main_go) and not assigned:
         raise OutsideContract('main.go reads the key from the environment, but not as os.Getenv("NAME") with a literal name')
+    allowed = {f'"{name}"' for name in assigned[:1]}
+    other_reads = [argument.strip() for argument in re.findall(r"os\.(?:Getenv|LookupEnv)\(([^)]*)\)", main_go) if argument.strip() not in allowed]
+    if other_reads:
+        raise OutsideContract(f"main.go reads environment variables other than the key: {', '.join(other_reads)}")
     if api_key not in (None, ""):
         match = ENV_PLACEHOLDER.match(api_key) if isinstance(api_key, str) else None
         if not match:

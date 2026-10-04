@@ -9,7 +9,5 @@ http.default_rate_limit: none
 # Backup run by the platform backup job to object storage, for data a service keeps on its own disk or VM:
 # schedule/retention, e.g. daily/30d, hourly/7d, weekly/28d, or none.
 backup.policy: none
-# Build policy for dependency manifests: exact, lockfile or none.
-dependencies.pinning: none
 # Fewest running instances the scheduler keeps for any service.
 availability.min_instances: 1
