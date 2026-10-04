@@ -230,6 +230,12 @@ def test_uncovered_file_after_retry_is_no_verdict_not_an_assertion():
     assert fault_outcome(record, fault) == "no-verdict"
 
 
+def test_stage_two_prompt_names_the_services_and_excludes_platform():
+    system = stage_system(2)
+    assert all(service in system for service in SERVICES)
+    assert '"platform" is not a service' in system and "{" not in system.split("Reply with JSON")[0]
+
+
 # --- scoring
 
 @pytest.mark.parametrize(
@@ -243,6 +249,9 @@ def test_uncovered_file_after_retry_is_no_verdict_not_an_assertion():
         ("instances", "instances", True),
         ("owner", "instances", False),
         ("lodash", "every requirement", True),
+        ("instances, zones, notes", "instances", True),
+        ("data, backup", "backup", True),
+        ("data, backup", "instances", False),
         ("", "instances", False),
         ("instances", "charge(): requests.post(timeout=)", False),
     ],

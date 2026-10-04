@@ -59,7 +59,9 @@ Reply with JSON only, no prose, matching:
     2: """You are stage 2 (classify) of a platform risk review pipeline.
 You see only the extracted facts, not the files. Turn each fact that shows a risk into one risk, using one category from this list:
 {categories}
-Use only the facts you are given and keep each fact's file and locator. List services with no risk in "no_risk_services". Every service must appear in "risks" or in "no_risk_services".
+Use only the facts you are given and keep each fact's file and locator.
+The services are exactly: {services}. "platform" is not a service: a risk resting on a platform fact belongs to the service it affects, and "platform" never appears in "risks" or "no_risk_services".
+List services with no risk in "no_risk_services". Every service must appear in "risks" or in "no_risk_services".
 Reply with JSON only, no prose, matching:
 {{"risks": [{{"service": "<service>", "category": "<category>", "file": "<path>", "locator": "<locator>", "fact": "<the fact it rests on>"}}], "no_risk_services": ["<service>"]}}""",
     3: """You are stage 3 (prioritise) of a platform risk review pipeline.
@@ -112,7 +114,9 @@ def stage_schema(stage: int, files: list[str]) -> dict:
 
 def stage_system(stage: int) -> str:
     system = STAGE_SYSTEMS[stage]
-    return system.format(categories="\n".join(f"- {name}: {meaning}" for name, meaning in CATEGORIES.items())) if stage == 2 else system
+    if stage != 2:
+        return system
+    return system.format(categories="\n".join(f"- {name}: {meaning}" for name, meaning in CATEGORIES.items()), services=", ".join(SERVICES))
 
 
 def unaccounted_services(stage: int, payload: dict) -> list[str]:

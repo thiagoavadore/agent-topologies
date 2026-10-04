@@ -32,17 +32,21 @@ class Injection:
     moved_to: str = ""  # wrong-service only
 
 
-def locator_parts(locator: str) -> tuple[str, tuple[str, ...]]:
-    """Split a locator into a kind and its parts: code (callee name), path (dotted keys) or file (whole file)."""
+def locator_parts(locator: str) -> tuple[str, list[tuple[str, ...]]]:
+    """Split a locator into a kind and its parts: code (callee name), paths (dotted keys, comma-separated) or file (whole file)."""
     text = locator.strip().lower()
     if not text:
-        return "empty", ()
+        return "empty", []
     if "(" in text:
-        return "code", (text.split("(")[0].strip(),)
-    first = text.split()[0].rstrip(":")
-    if first == "every":
-        return "file", ()
-    return "path", tuple(first.split("."))
+        return "code", [(text.split("(")[0].strip(),)]
+    if text.split()[0] == "every":
+        return "file", []
+    return "path", [tuple(key.strip().split(".")) for key in text.split(",") if key.strip()]
+
+
+def path_overlaps(first: tuple[str, ...], second: tuple[str, ...]) -> bool:
+    shorter = min(len(first), len(second))
+    return first[:shorter] == second[:shorter]
 
 
 def locator_matches(cited: str, expected: str) -> bool:
@@ -57,8 +61,7 @@ def locator_matches(cited: str, expected: str) -> bool:
         return False
     if expected_kind == "code":
         return cited_parts == expected_parts
-    shorter = min(len(cited_parts), len(expected_parts))
-    return cited_parts[:shorter] == expected_parts[:shorter]
+    return any(path_overlaps(c, e) for c in cited_parts for e in expected_parts)
 
 
 def target_facts(facts: list[dict], risk: Risk) -> tuple[list[dict], str]:
