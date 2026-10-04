@@ -21,4 +21,4 @@ build-backend = "hatchling.build"
 packages = ["src/topologies"]
 
 [tool.pytest.ini_options]
-testpaths = ["01-orchestrator-worker/tests", "tests"]
+testpaths = ["01-orchestrator-worker/tests", "03-fan-out-partial-reducer/tests", "tests"]
