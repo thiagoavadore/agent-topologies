@@ -11,7 +11,18 @@ from pathlib import Path
 import yaml
 
 from topologies import pins
-from topologies.harbour import FIXTURE, HUB_FILE, NEEDS, REGRESSION_NEEDS, RISKS, Need, planted_secret
+from topologies.harbour import (
+    FIXTURE,
+    HUB_FILE,
+    NEEDS,
+    REGRESSION_NEEDS,
+    RISKS,
+    RISKS_BY_ID,
+    Need,
+    OutsideContract,
+    contract_breaches,
+    planted_secret,
+)
 from topologies.pytimeouts import CallSite, Unresolved, effective_timeout
 
 # Value grammars for settings; a bare number has no unit and does not parse.
@@ -21,11 +32,13 @@ BACKUP = re.compile(r"^\s*(hourly|daily|weekly)\s*/\s*(\d+)\s*d\s*$")
 BACKUP_PERIOD_DAYS = {"hourly": 1, "daily": 1, "weekly": 7}
 ENV_PLACEHOLDER = re.compile(r"^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$")
 SECRET_TOKEN = re.compile(rb"cp_live_[A-Za-z0-9]{8,}")
+SECRET_PREFIX = b"cp_live_"
 TF_REFERENCE = re.compile(r"^\$\{(var|local)\.([A-Za-z_][A-Za-z0-9_-]*)\}$")
 PRIVATE_NETWORKS = tuple(
-    ipaddress.ip_network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
+    ipaddress.ip_network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7")
 )
 HTTP_KEYS = ("http.default_timeout", "http.default_rate_limit")
+PRICING_TIMEOUT_LINE = "const timeoutMs = parseDuration(process.env.PLATFORM_HTTP_TIMEOUT);"
 
 BOOKINGS_CALL = CallSite("bookings-api", "bookings_api", "charge", ("post", "put", "request"), None, "requests")
 NOTIFICATIONS_CALL = CallSite("notifications", "notifications", "send_email", ("SMTP", "SMTP_SSL"), 3, "smtp")
@@ -39,6 +52,7 @@ class NotFixed(Exception):
 class RiskResult:
     fixed: bool
     reason: str
+    outside_contract: bool = False  # not fixed because the edit used a form the worker contract excludes
 
 
 @dataclass(frozen=True)
@@ -46,6 +60,7 @@ class NeedResult:
     regressed: bool
     effective: str | None  # the raw setting the service ends up with, None if it cannot be read
     reason: str
+    outside_contract: bool = False
 
 
 @dataclass(frozen=True)
@@ -58,6 +73,10 @@ class CheckResult:
         return [risk_id for risk_id, result in self.risks.items() if result.fixed]
 
     @property
+    def outside_contract(self) -> list[str]:
+        return [risk_id for risk_id, result in self.risks.items() if result.outside_contract]
+
+    @property
     def regressed(self) -> list[str]:
         return [need_id for need_id, result in self.needs.items() if result.regressed]
 
@@ -66,7 +85,7 @@ def parse_duration(value) -> float:
     """Seconds from a duration such as 300ms or 12s."""
     match = DURATION.match(value) if isinstance(value, str) else None
     if not match:
-        raise NotFixed(f"{value!r} is not a duration with a unit (e.g. 300ms, 12s)")
+        raise OutsideContract(f"{value!r} is not a duration with a unit (e.g. 300ms, 12s)")
     seconds = float(match.group(1)) / (1000 if match.group(2) == "ms" else 1)
     if seconds <= 0:
         raise NotFixed(f"{value!r} must be above zero")
@@ -79,7 +98,7 @@ def parse_rate(value) -> float | None:
         return None
     match = RATE.match(value) if isinstance(value, str) else None
     if not match:
-        raise NotFixed(f"{value!r} is not a rate (e.g. 20/s, 600/min, none)")
+        raise OutsideContract(f"{value!r} is not a rate (e.g. 20/s, 600/min, none)")
     per_second = float(match.group(1)) / (60 if match.group(2) == "min" else 1)
     if per_second <= 0:
         raise NotFixed(f"{value!r} must be above zero")
@@ -92,7 +111,7 @@ def parse_backup(value) -> tuple[str, int] | None:
         return None
     match = BACKUP.match(value) if isinstance(value, str) else None
     if not match:
-        raise NotFixed(f"{value!r} is not a backup policy (e.g. daily/30d, none)")
+        raise OutsideContract(f"{value!r} is not a backup policy (e.g. daily/30d, none)")
     schedule, days = match.group(1), int(match.group(2))
     if days < BACKUP_PERIOD_DAYS[schedule]:
         raise NotFixed(f"{value!r} keeps backups for less than one {schedule} period")
@@ -107,7 +126,10 @@ class Repo:
         path = self.root / relative
         if not path.is_file():
             raise NotFixed(f"{relative} is missing")
-        return path.read_text()
+        try:
+            return path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise NotFixed(f"{relative} is not UTF-8") from None
 
     def yaml(self, relative: str) -> dict:
         try:
@@ -132,7 +154,10 @@ class Repo:
         if overrides is None:
             return {}
         if not isinstance(overrides, dict):
-            raise NotFixed(f"{service} overrides is not a mapping")
+            raise OutsideContract(f"{service} overrides is not a mapping")
+        unknown = sorted(set(overrides) - set(HTTP_KEYS))
+        if unknown:
+            raise OutsideContract(f"{service} overrides holds {', '.join(map(str, unknown))}; only http.* keys may be overridden")
         return overrides
 
     def http_setting(self, service: str, key: str) -> tuple[object, str]:
@@ -146,8 +171,8 @@ class Repo:
         value, source = self.http_setting(service, "http.default_timeout")
         try:
             return parse_duration(value)
-        except NotFixed as error:
-            raise Unresolved(f"http.default_timeout from {source}: {error}") from None
+        except OutsideContract as error:
+            raise OutsideContract(f"http.default_timeout from {source}: {error}") from None
 
 
 def within(value: float, need: Need, parse: Callable, unit: str) -> str:
@@ -160,15 +185,20 @@ def within(value: float, need: Need, parse: Callable, unit: str) -> str:
 
 
 def timeout_fixed(repo: Repo, site: CallSite, need: Need) -> str:
+    """Each attempt must wait at least the need's minimum; all attempts together at most its maximum."""
     try:
-        seconds = effective_timeout(repo.root, site, lambda: repo.timeout_seconds(site.service))
+        timeout = effective_timeout(repo.root, site, lambda: repo.timeout_seconds(site.service))
     except Unresolved as error:
         raise NotFixed(str(error)) from None
-    if seconds is None:
+    if timeout.seconds is None:
         raise NotFixed(f"{site.function}() still has no timeout")
-    if seconds <= 0:
-        raise NotFixed(f"{site.function}() timeout {seconds:g} s is not above zero")
-    return f"{site.function}() timeout " + within(seconds, need, parse_duration, " s")
+    if timeout.seconds <= 0:
+        raise NotFixed(f"{site.function}() timeout {timeout.seconds:g} s is not above zero")
+    if need.minimum is not None and timeout.seconds < parse_duration(need.minimum):
+        raise NotFixed(f"{timeout.seconds:g} s per attempt is below {need.id} minimum {need.minimum}")
+    if need.maximum is not None and timeout.worst_case > parse_duration(need.maximum):
+        raise NotFixed(f"{timeout.attempts} x {timeout.seconds:g} s is above {need.id} maximum {need.maximum}")
+    return f"{site.function}() timeout {timeout.attempts} x {timeout.seconds:g} s, within {need.minimum}..{need.maximum}"
 
 
 def bookings_timeout(repo: Repo) -> str:
@@ -210,15 +240,17 @@ def go_code(text: str) -> str:
 
 
 def secret_locations(root: Path, secret: str) -> list[str]:
-    """Files under `root` holding the planted secret, its hex part, either base64-encoded, or any cp_live_ key."""
+    """Files holding the planted secret, its hex part, base64 of either, any cp_live_ key, or the prefix outside docs."""
     tail = secret.removeprefix("cp_live_")
     needles = [secret, tail, base64.b64encode(secret.encode()).decode(), base64.b64encode(tail.encode()).decode()]
     found = []
     for path in sorted(root.rglob("*")):
-        if ".git" in path.relative_to(root).parts or not path.is_file():
+        relative = path.relative_to(root)
+        if relative.parts[:2] == (".git", "objects") or not path.is_file():
             continue
         content = path.read_bytes()
-        if SECRET_TOKEN.search(content) or any(needle.encode() in content for needle in needles):
+        split_key = SECRET_PREFIX in content and path.suffix != ".md"
+        if split_key or SECRET_TOKEN.search(content) or any(needle.encode() in content for needle in needles):
             found.append(str(path.relative_to(root)))
     return found
 
@@ -232,38 +264,40 @@ def payments_secret(repo: Repo) -> str:
         raise NotFixed("payments-gateway/config.yaml has no processor mapping")
     main_go = go_code(repo.text("payments-gateway/main.go"))
     api_key = processor.get("api_key")
-    if api_key is not None:
+    assigned = re.findall(r'\.APIKey\s*=\s*os\.Getenv\("([A-Za-z_][A-Za-z0-9_]*)"\)', main_go)
+    if assigned and api_key in (None, ""):
+        return f"main.go sets APIKey from {assigned[0]} in the environment"
+    if re.search(r"\.APIKey\s*=\s*os\.(?:Getenv|LookupEnv)\(", main_go):
+        raise OutsideContract('main.go reads the key from the environment, but not as os.Getenv("NAME") with a literal name')
+    if api_key not in (None, ""):
         match = ENV_PLACEHOLDER.match(api_key) if isinstance(api_key, str) else None
         if not match:
             raise NotFixed(f"processor.api_key is {api_key!r}, not an environment placeholder like ${{NAME}}")
         if "os.ExpandEnv(" not in main_go:
             raise NotFixed("main.go no longer expands environment placeholders in config.yaml")
         return f"api_key comes from ${match.group(1) or match.group(2)} through os.ExpandEnv"
-    reads = re.findall(r'os\.(?:Getenv|LookupEnv)\("([A-Za-z_][A-Za-z0-9_]*)"\)', main_go)
-    if not reads:
-        raise NotFixed("api_key was removed but main.go reads no environment variable for it")
-    return f"api_key removed from config; main.go reads {', '.join(reads)} from the environment"
+    raise NotFixed("api_key is gone from config.yaml but main.go never sets APIKey from the environment")
 
 
 def instances_fixed(repo: Repo, service: str) -> str:
     declared = repo.service(service).get("instances")
     if isinstance(declared, bool) or not isinstance(declared, int) or declared < 1:
-        raise NotFixed(f"{service} instances is {declared!r}, not a whole number of at least 1")
+        raise OutsideContract(f"{service} instances is {declared!r}, not a whole number of at least 1")
     floor = repo.hub("availability.min_instances")
     if isinstance(floor, bool) or not isinstance(floor, int) or floor < 1:
-        raise NotFixed(f"availability.min_instances is {floor!r}, not a whole number of at least 1")
+        raise OutsideContract(f"availability.min_instances is {floor!r}, not a whole number of at least 1")
     effective = max(declared, floor)
     if effective < 2:
-        ignored = " (overrides are not read for availability; set instances)" if "availability.min_instances" in repo.overrides(service) else ""
-        raise NotFixed(f"{service} still runs {effective} instance{ignored}")
+        repo.overrides(service)
+        raise NotFixed(f"{service} still runs {effective} instance")
     return f"{effective} instances (instances: {declared}, platform floor: {floor})"
 
 
 def fleet_owner(repo: Repo) -> str:
     owner = repo.service("fleet-telemetry").get("owner")
     if not isinstance(owner, dict) or not isinstance(owner.get("team"), str) or not isinstance(owner.get("contact"), str):
-        raise NotFixed(f"owner is {owner!r}, not a mapping with team and contact")
-    teams = yaml.safe_load((FIXTURE / "teams.yaml").read_text())["teams"]
+        raise OutsideContract(f"owner is {owner!r}, not a mapping with team and contact")
+    teams = yaml.safe_load((FIXTURE / "teams.yaml").read_text(encoding="utf-8"))["teams"]
     team = next((entry for entry in teams if entry["name"].casefold() == owner["team"].strip().casefold()), None)
     if team is None:
         raise NotFixed(f"owner team {owner['team']!r} is not a team in teams.yaml")
@@ -279,14 +313,14 @@ def backup_fixed(repo: Repo, service: str) -> str:
     else:
         policy, source = parse_backup(repo.hub("backup.policy")), "platform backup.policy"
     if policy is None:
-        ignored = " (overrides are not read for backup; set backup)" if "backup.policy" in repo.overrides(service) else ""
-        raise NotFixed(f"{service} data still has no backup ({source} is none){ignored}")
+        repo.overrides(service)
+        raise NotFixed(f"{service} data still has no backup ({source} is none)")
     return f"{policy[0]} backups kept {policy[1]} days, from {source}"
 
 
 def pricing_pins(repo: Repo) -> str:
     try:
-        pins.check_package_json(repo.text("pricing-engine/package.json"), (FIXTURE / "pricing-engine/package.json").read_text())
+        pins.check_package_json(repo.text("pricing-engine/package.json"), (FIXTURE / "pricing-engine/package.json").read_text(encoding="utf-8"))
     except pins.Unpinned as error:
         raise NotFixed(str(error)) from None
     return "every package.json dependency is an exact version"
@@ -294,7 +328,7 @@ def pricing_pins(repo: Repo) -> str:
 
 def notifications_pins(repo: Repo) -> str:
     try:
-        pins.check_requirements(repo.text("notifications/requirements.txt"), (FIXTURE / "notifications/requirements.txt").read_text())
+        pins.check_requirements(repo.text("notifications/requirements.txt"), (FIXTURE / "notifications/requirements.txt").read_text(encoding="utf-8"))
     except pins.Unpinned as error:
         raise NotFixed(str(error)) from None
     return "every requirement is pinned with =="
@@ -303,19 +337,19 @@ def notifications_pins(repo: Repo) -> str:
 class Terraform:
     """The Terraform JSON files of one directory, with var and local references resolved to literals."""
 
-    ALLOWED_BLOCKS = {"variable", "locals", "resource", "output", "terraform", "provider", "data"}
+    ALLOWED_BLOCKS = {"//", "variable", "locals", "resource", "output", "terraform", "provider", "data"}
 
     def __init__(self, directory: Path):
         if any(directory.rglob("*.tf")):
-            raise NotFixed(f"{directory.name} has HCL .tf files, which this check does not parse")
+            raise OutsideContract(f"{directory.name} has HCL .tf files; ingress rules stay in Terraform JSON")
         self.documents, self.variables, self.locals = [], {}, {}
         for path in sorted(directory.rglob("*.tf.json")):
             try:
-                document = json.loads(path.read_text())
+                document = json.loads(path.read_text(encoding="utf-8"))
             except ValueError as error:
                 raise NotFixed(f"{path.name} does not parse: {error}") from None
             if not isinstance(document, dict) or set(document) - self.ALLOWED_BLOCKS:
-                raise NotFixed(f"{path.name} has blocks this check does not read: {sorted(set(document) - self.ALLOWED_BLOCKS)}")
+                raise OutsideContract(f"{path.name} has blocks this check does not read: {sorted(set(document) - self.ALLOWED_BLOCKS)}")
             for name, variable in (document.get("variable") or {}).items():
                 if name in self.variables:
                     raise NotFixed(f"variable {name} is declared twice")
@@ -336,11 +370,11 @@ class Terraform:
             return value
         match = TF_REFERENCE.match(value)
         if not match:
-            raise NotFixed(f"cannot resolve Terraform expression {value!r}")
+            raise OutsideContract(f"Terraform expression {value!r} is not a literal, var or local")
         kind, name = match.groups()
         table = self.variables if kind == "var" else self.locals
         if table.get(name) is None:
-            raise NotFixed(f"{kind}.{name} has no literal value")
+            raise OutsideContract(f"{kind}.{name} has no literal value in the Terraform JSON")
         return self.resolve(table[name], depth + 1)
 
     def cidrs(self, body: dict, *keys: str) -> list:
@@ -381,7 +415,7 @@ def ingress_rules(terraform: Terraform) -> list[Ingress]:
         if kind == "egress":
             continue
         if body.get("prefix_list_ids"):
-            raise NotFixed(f"{where} uses prefix lists, which this check cannot resolve")
+            raise OutsideContract(f"{where} uses prefix lists")
         cidrs = terraform.cidrs(body, "cidr_blocks", "ipv6_cidr_blocks")
         from_group = bool(body.get("source_security_group_id") or body.get("self"))
         rules.append(Ingress(where, cidrs, from_group, *(terraform.resolve(body.get(k)) for k in ("from_port", "to_port", "protocol"))))
@@ -394,7 +428,7 @@ def ingress_rules(terraform: Terraform) -> list[Ingress]:
             rules.append(Ingress(f"{where}.ingress[{index}]", cidrs, from_group, *(terraform.resolve(block.get(k)) for k in ("from_port", "to_port", "protocol"))))
     for where, body in terraform.resources("aws_vpc_security_group_ingress_rule"):
         if body.get("prefix_list_id"):
-            raise NotFixed(f"{where} uses a prefix list, which this check cannot resolve")
+            raise OutsideContract(f"{where} uses a prefix list")
         cidrs = [terraform.resolve(body[k]) for k in ("cidr_ipv4", "cidr_ipv6") if body.get(k)]
         from_group = bool(body.get("referenced_security_group_id"))
         rules.append(Ingress(where, cidrs, from_group, *(terraform.resolve(body.get(k)) for k in ("from_port", "to_port", "ip_protocol"))))
@@ -454,27 +488,51 @@ NEED_PARSERS = {"http.default_timeout": (parse_duration, " s"), "http.default_ra
 
 
 def need_result(repo: Repo, need: Need) -> NeedResult:
+    """Breaking the need, or making it unreadable, is a regression."""
     parse, unit = NEED_PARSERS[need.measures]
     try:
         value, source = repo.http_setting(need.service, need.measures)
-    except NotFixed as error:
+    except OutsideContract as error:
+        return NeedResult(True, None, f"outside contract: {error}", outside_contract=True)
+    except Exception as error:
         return NeedResult(True, None, f"{need.measures} for {need.service} cannot be read: {error}")
+    if need.service == "pricing-engine" and PRICING_TIMEOUT_LINE not in repo.text("pricing-engine/src/index.js"):
+        return NeedResult(True, str(value), "outside contract: pricing-engine no longer reads PLATFORM_HTTP_TIMEOUT", outside_contract=True)
     try:
         parsed = parse(value)
         if parsed is None:
             return NeedResult(False, str(value), f"no limit from {source}")
         return NeedResult(False, str(value), f"from {source}: " + within(parsed, need, parse, unit))
+    except OutsideContract as error:
+        return NeedResult(True, str(value), f"outside contract: from {source}: {error}", outside_contract=True)
     except NotFixed as error:
         return NeedResult(True, str(value), f"from {source}: {error}")
+
+
+def breach_for(risk_id: str, breaches: dict[str, str]) -> str | None:
+    """The file-level contract breach that voids this risk's fix, if any."""
+    service = RISKS_BY_ID[risk_id].service
+    scopes = [service, "repo"]
+    if risk_id in ("bookings-api.missing_timeout", "notifications.missing_timeout"):
+        scopes.append("libs/platform_config.py")
+    if risk_id == "fleet-telemetry.no_owner":
+        scopes.append("teams.yaml")
+    return next((breaches[scope] for scope in scopes if scope in breaches), None)
 
 
 def check(repo_path: Path) -> CheckResult:
     """Score a Harbour Bikes repo: each planted risk fixed or not, each regression need broken or not, with reasons."""
     repo = Repo(Path(repo_path))
+    breaches = contract_breaches(repo.root)
     risks = {}
     for risk in RISKS:
         try:
+            breach = breach_for(risk.id, breaches)
+            if breach:
+                raise OutsideContract(breach)
             risks[risk.id] = RiskResult(True, RISK_CHECKS[risk.id](repo))
+        except OutsideContract as error:
+            risks[risk.id] = RiskResult(False, f"outside contract: {error}", outside_contract=True)
         except (NotFixed, OSError, UnicodeDecodeError) as error:
             risks[risk.id] = RiskResult(False, str(error))
         except Exception as error:  # malformed edits must score as not fixed, never crash a benchmark run

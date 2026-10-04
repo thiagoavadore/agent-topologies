@@ -8,6 +8,8 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from topologies.harbour import OutsideContract
+
 # npm's exact version: optional "=" or "v", then MAJOR.MINOR.PATCH with optional prerelease and build metadata.
 NPM_EXACT = re.compile(
     r"^[=v]?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?P<prerelease>-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
@@ -28,11 +30,11 @@ def pip_requirements(text: str) -> dict[str, Requirement]:
         if not line or line.startswith("#"):
             continue
         if line.startswith("-"):
-            raise Unpinned(f"line {number} is a pip option ({line.split()[0]}); pins must be in this file")
+            raise OutsideContract(f"line {number} is a pip option ({line.split()[0]}); pins must be in this file")
         try:
             requirement = Requirement(line)
         except InvalidRequirement as error:
-            raise Unpinned(f"line {number} does not parse: {error}") from None
+            raise OutsideContract(f"line {number} is not a requirement: {error}") from None
         name = canonicalize_name(requirement.name)
         if name in requirements:
             raise Unpinned(f"{requirement.name} is listed twice")
