@@ -68,7 +68,7 @@ Values live in each service's `service.yaml` (`needs:`) with the reason beside t
 
 ## Fake-fix suite
 
-`tests/test_fixcheck.py` applies the full reference fix, breaks one thing in a way that looks like a fix, and asserts the risk is not fixed (or the need regressed) for the expected reason and with the expected contract flag. 113 fakes (104 fixes, 9 regressions, 47 of them outside contract); see `FAKE_FIXES`, `FAKE_REGRESSIONS`, `REJECTION_REASONS` and `OUTSIDE_CONTRACT` there. `ALTERNATIVE_FIXES` holds honest variants that must still count (literal constants, `import platform_config`, sessions, `SMTP_SSL`, a positional SMTP timeout, hub-level backup and floor, a bounded retry, `Getenv` with an empty `api_key`, a security-group source, the CGNAT VPN range, a `"//"` comment key, exception handling and extra headers around the call).
+`tests/test_fixcheck.py` applies the full reference fix, breaks one thing in a way that looks like a fix, and asserts the risk is not fixed (or the need regressed) for the expected reason and with the expected contract flag. 114 fakes (105 fixes, 9 regressions, 48 of them outside contract); see `FAKE_FIXES`, `FAKE_REGRESSIONS`, `REJECTION_REASONS` and `OUTSIDE_CONTRACT` there. `ALTERNATIVE_FIXES` holds honest variants that must still count (literal constants, `import platform_config`, sessions, `SMTP_SSL`, a positional SMTP timeout, hub-level backup and floor, a bounded retry, `Getenv` with an empty `api_key`, a security-group source, the CGNAT VPN range, a `"//"` comment key, exception handling and extra headers around the call).
 
 ## Remaining limits
 

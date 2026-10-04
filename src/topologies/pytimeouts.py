@@ -214,6 +214,12 @@ def static_timeout(source: str, site: CallSite, hub_timeout: Callable[[], float]
             raise OutsideContract(f"{site.function}() is called from inside the module, so it can retry itself")
         if isinstance(node, ast.Call) and call_name(node) in TIMEOUT_CHANGERS:
             raise OutsideContract(f"`{ast.unparse(node)}` changes socket timeouts outside the call")
+        if isinstance(node, ast.alias) and node.name.split(".")[-1] in RETRY_MACHINERY:
+            raise OutsideContract(f"importing {node.name} brings retries or transport changes outside the call")
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and any(
+            (getattr(node, "module", None) or alias.name).startswith(("requests.adapters", "urllib3")) for alias in node.names
+        ):
+            raise OutsideContract("importing requests.adapters or urllib3 brings retries or transport changes outside the call")
         if isinstance(node, (ast.Name, ast.Attribute)) and (getattr(node, "id", None) or getattr(node, "attr", None)) in RETRY_MACHINERY:
             raise OutsideContract(f"`{ast.unparse(node)}` adds retries or transport changes outside the call")
         targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, (ast.AugAssign, ast.AnnAssign)) else []

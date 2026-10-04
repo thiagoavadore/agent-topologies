@@ -382,6 +382,10 @@ FAKE_FIXES = {
             "    session = requests.Session()\n    session.mount('http://', requests.adapters.HTTPAdapter(max_retries=5))\n    return session.post(PAYMENTS_URL, json=booking.to_payment(), timeout=15)",
         ),
     ),
+    "retry adapter imported at module top": (
+        "bookings-api.missing_timeout",
+        lambda r: replace(r, "bookings-api/bookings_api.py", "import requests\n", "import requests\nfrom requests.adapters import HTTPAdapter\n"),
+    ),
     "timeout as a (connect, read) tuple": ("bookings-api.missing_timeout", lambda r: bookings_code(r, "    return " + BOOKING_POST.format("(20, 20)"))),
     "timeout as a parameter default": (
         "bookings-api.missing_timeout",
@@ -582,6 +586,7 @@ FAKE_REGRESSIONS = {
 
 # Why each fake must be rejected: a fake rejected for any other reason is a checker or test bug.
 REJECTION_REASONS = {
+    'retry adapter imported at module top': 'outside contract: importing requests.adapters',
     'timeout=None': 'charge() still has no timeout',
     'undefined timeout variable': '`PAYMENTS_TIMEOUT` is not defined',
     'timeout constant reassigned to None': 'outside contract: `TIMEOUT` is bound 2 times in the module; a constant is assign',
@@ -698,6 +703,7 @@ REJECTION_REASONS = {
 }
 # Fakes that use a form the worker contract excludes; every other fake is inside the contract and simply not fixed.
 OUTSIDE_CONTRACT = {
+    'retry adapter imported at module top',
     'timeout constant reassigned to None',
     'timeout from an environment variable',
     'endless retry loop around the call',
