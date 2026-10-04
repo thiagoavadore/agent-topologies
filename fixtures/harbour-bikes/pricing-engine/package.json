@@ -1,0 +1,15 @@
+{
+  "name": "pricing-engine",
+  "version": "3.4.0",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "latest",
+    "decimal.js": "*",
+    "demand-model-client": "^2.0.0",
+    "pino": "9.5.0"
+  }
+}

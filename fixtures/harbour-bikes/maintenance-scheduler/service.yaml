@@ -1,0 +1,13 @@
+name: maintenance-scheduler
+description: Nightly at 02:00 plans the next day's repair routes from mileage and fault reports; the mechanics' tablets download the plan at 06:00.
+owner:
+  team: Team Fleet
+  contact: fleet@harbourbikes.example
+runtime: python3.11 (cron)
+instances: 1  # one crontab entry on ops-cron-01; nothing alerts if the job does not run
+zones: 1
+data:
+  store: SQLite files plan.sqlite and history.sqlite (three years of repair records)
+  location: vm-local-disk
+backup: null  # inherits platform backup.policy; history is not copied anywhere else
+overrides: {}

@@ -1,0 +1,22 @@
+name: bookings-api
+description: Takes bike reservations from the app and website, holds a bike for 10 minutes, then charges through payments-gateway.
+owner:
+  team: Team Rentals
+  contact: rentals@harbourbikes.example
+runtime: python3.12 (FastAPI)
+instances: 4
+zones: 2
+endpoints:
+  - {route: "POST /v1/bookings", exposure: public}
+  - {route: "GET /v1/bookings/{id}", exposure: public}
+  - {route: "POST /internal/bookings/{id}/release", exposure: internal-mtls}
+data:
+  store: shared-postgres
+  location: shared-cluster
+backup: null  # the shared Postgres cluster is snapshotted by the platform DBA team
+needs:
+  # payments-gateway may take 4 s per attempt and retries twice (3 attempts); the app gives up at 30 s.
+  payment_call_timeout: {min: 12s, max: 25s}
+  # The app sends at most one request per second per customer and retries once; above 50/s from one client is abuse.
+  public_rate_limit_per_client: {min: 2/s, max: 50/s}
+overrides: {}

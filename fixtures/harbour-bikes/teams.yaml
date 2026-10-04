@@ -1,0 +1,14 @@
+# Teams that can own a service and receive its pages.
+teams:
+  - name: Team Rentals
+    contact: rentals@harbourbikes.example
+  - name: Team Growth
+    contact: growth@harbourbikes.example
+  - name: Team Money
+    contact: money@harbourbikes.example
+  - name: Team Identity
+    contact: identity@harbourbikes.example
+  - name: Team Fleet
+    contact: fleet@harbourbikes.example
+  - name: Team Ops Tools
+    contact: opstools@harbourbikes.example

@@ -1,0 +1,16 @@
+name: customer-profiles
+description: Stores customer accounts (name, email, phone, driving-licence check, saved payment method token).
+owner:
+  team: Team Identity
+  contact: identity@harbourbikes.example
+runtime: kotlin (Spring Boot)
+instances: 3
+zones: 2
+endpoints:
+  - {route: "GET /internal/profiles/{id}", exposure: internal-mtls}
+  - {route: "PATCH /internal/profiles/{id}", exposure: internal-mtls}
+data:
+  store: own Postgres (profiles-db) on a self-managed VM
+  location: vm-local-disk
+backup: null  # inherits platform backup.policy; a dump job was on the Q3 migration plan
+overrides: {}

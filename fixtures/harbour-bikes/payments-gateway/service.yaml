@@ -1,0 +1,16 @@
+name: payments-gateway
+description: Wraps the card processor; every charge and refund at Harbour Bikes goes through here.
+owner:
+  team: Team Money
+  contact: money@harbourbikes.example
+runtime: go1.23
+instances: 3
+zones: 2
+data:
+  store: shared-redis (idempotency keys, AOF on) and shared-postgres (ledger)
+  location: shared-cluster
+backup: null  # shared clusters are snapshotted by the platform DBA team
+needs:
+  # bookings-api charges at up to 20 requests per second at peak; the load balancer limit must not throttle it.
+  inbound_rate_per_caller: {min: 20/s}
+overrides: {}  # inherits http.default_rate_limit from platform.yaml

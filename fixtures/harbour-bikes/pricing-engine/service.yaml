@@ -1,0 +1,16 @@
+name: pricing-engine
+description: Computes a rental price from duration, bike type, zone and demand; bookings-api calls it before every reservation.
+owner:
+  team: Team Rentals
+  contact: rentals@harbourbikes.example
+runtime: node22
+instances: 2
+zones: 2
+data:
+  store: none
+  location: stateless
+backup: null
+needs:
+  # bookings-api waits at most 400 ms for a price; demand-model must answer, or fall back to base prices, within 300 ms.
+  demand_model_timeout: {max: 300ms}
+overrides: {}  # inherits http.default_timeout from platform.yaml

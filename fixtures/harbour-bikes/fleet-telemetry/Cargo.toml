@@ -1,0 +1,9 @@
+[package]
+name = "fleet-telemetry"
+version = "0.9.0"
+edition = "2021"
+
+[dependencies]
+rumqttc = "=0.24.0"
+tokio = { version = "=1.41.1", features = ["full"] }
+sqlx = { version = "=0.8.2", features = ["postgres", "runtime-tokio"] }

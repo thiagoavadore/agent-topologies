@@ -1,0 +1,7 @@
+# Loaded by main.go; ${NAME} placeholders are expanded from the environment.
+processor:
+  base_url: https://api.cardprocessor.example/v2
+  merchant_id: HB-221-NL
+  api_key: cp_live_9f2c8e71d4a04b6fa3e1c55d0b8a2f17
+  timeout_ms: 4000
+  retries: 2

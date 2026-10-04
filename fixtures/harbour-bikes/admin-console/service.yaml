@@ -1,0 +1,16 @@
+name: admin-console
+description: Internal back-office for support staff - refund bookings, block customers, move bikes between zones.
+owner:
+  team: Team Ops Tools
+  contact: opstools@harbourbikes.example
+runtime: ruby on rails
+instances: 2
+zones: 2
+endpoints:
+  - {route: "https://admin.harbourbikes.example", exposure: see network.tf.json}
+auth: shared username and password in the team's password manager; no SSO yet
+data:
+  store: none (calls the other services' internal APIs)
+  location: stateless
+backup: null
+overrides: {}

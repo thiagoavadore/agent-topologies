@@ -1,0 +1,12 @@
+name: fleet-telemetry
+description: Ingests GPS position and battery level from every bike over MQTT, writes to TimescaleDB, alerts on bikes leaving the city.
+owner: null  # the original author left in March; pages go to the general on-call rotation
+runtime: rust (tokio)
+instances: 1  # one VM, telemetry-01, runs the Mosquitto broker and the ingest process; systemd restarts the process
+zones: 1
+data:
+  store: managed TimescaleDB (point-in-time recovery, 7 days)
+  location: managed
+backup: null  # not needed: data is in the managed database (point-in-time recovery)
+notes: If the VM is down, bikes buffer 15 minutes of readings, then drop them.
+overrides: {}

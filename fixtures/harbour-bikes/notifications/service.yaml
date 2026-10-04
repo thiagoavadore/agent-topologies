@@ -1,0 +1,16 @@
+name: notifications
+description: Sends booking confirmations, receipts and "your bike is due back" reminders by email and push.
+owner:
+  team: Team Growth
+  contact: growth@harbourbikes.example
+runtime: python3.12 (Celery workers)
+instances: 3
+zones: 2
+data:
+  store: shared-redis
+  location: shared-cluster
+backup: null  # the queue lives in the shared, replicated Redis
+needs:
+  # The SMTP relay takes up to 1.5 s to greet under load; the Celery task's soft time limit is 30 s.
+  smtp_timeout: {min: 2s, max: 20s}
+overrides: {}

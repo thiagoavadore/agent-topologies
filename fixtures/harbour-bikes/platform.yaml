@@ -1,0 +1,15 @@
+# Platform defaults for every Harbour Bikes service. A service inherits each key unless its service.yaml says otherwise:
+# http.* keys through `overrides:`, backup through `backup:`, and `instances:` can only raise the availability floor.
+# The deploy injects the effective http.default_timeout into every container as PLATFORM_HTTP_TIMEOUT;
+# Python services read it through libs/platform_config.py.
+# Longest wait on an outbound call, with a unit: e.g. 300ms or 12s.
+http.default_timeout: 300ms
+# Requests each service accepts from one caller, enforced by the shared load balancer: e.g. 20/s or 600/min, or none.
+http.default_rate_limit: none
+# Backup run by the platform backup job to object storage, for data a service keeps on its own disk or VM:
+# schedule/retention, e.g. daily/30d, hourly/7d, weekly/28d, or none.
+backup.policy: none
+# Build policy for dependency manifests: exact, lockfile or none.
+dependencies.pinning: none
+# Fewest running instances the scheduler keeps for any service.
+availability.min_instances: 1
