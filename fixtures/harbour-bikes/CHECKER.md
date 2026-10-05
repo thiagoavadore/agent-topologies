@@ -1,6 +1,6 @@
 # How the checker scores a Harbour Bikes repo
 
-`topologies.fixcheck.check(repo)` reads a copy of this repo after agents have edited it. For each of the 12 planted risks it returns fixed or not, with a reason. For each of the two planted needs it returns regressed or not, with the value the service ends up with. No model is involved. Every rule parses a file (Python AST, YAML, JSON, Terraform JSON, pip and npm version rules) or runs the code; none reads prose.
+`topologies.fixcheck.check(repo)` reads a copy of this repo after agents have edited it. For each of the 11 planted risks it returns fixed or not, with a reason. For each of the two planted needs it returns regressed or not, with the value the service ends up with. No model is involved. Every rule parses a file (Python AST, YAML, JSON, Terraform JSON, pip and npm version rules) or runs the code; none reads prose.
 
 The answer key (risk IDs, needs, team registry, the original secret and manifests) comes from the pristine fixture in this repository, never from the repo under check, so editing a `needs:` block or `teams.yaml` cannot move the goalposts.
 
@@ -46,7 +46,6 @@ Formats: durations need a unit (`300ms`, `12s`); rates are `N/s`, `N/min` or `no
 | `bookings-api.no_rate_limit` | Effective `http.default_rate_limit` for bookings-api is 2/s to 50/s | YAML, rate grammar |
 | `payments-gateway.hardcoded_secret` | No file outside `.git/objects` holds the planted key, its hex part, base64 of either, any `cp_live_` key, or (outside `.md` files) the bare `cp_live_` prefix; and the key comes from the environment | Byte scan; then either `processor.api_key` is exactly `${NAME}`/`$NAME` and comment-stripped `main.go` still calls `os.ExpandEnv(`, or `api_key` is absent or `""` and `main.go` assigns `.APIKey = os.Getenv("NAME")` |
 | `fleet-telemetry.single_point_of_failure` | Effective instances is at least 2 | YAML |
-| `maintenance-scheduler.single_point_of_failure` | Same | Same |
 | `fleet-telemetry.no_owner` | `owner:` names a team in the original `teams.yaml` with that team's contact | YAML |
 | `customer-profiles.missing_backup` | Effective backup is a schedule whose retention covers at least one period (`weekly/1d` fails) | YAML, backup grammar |
 | `maintenance-scheduler.missing_backup` | Same | Same |
@@ -68,7 +67,7 @@ Values live in each service's `service.yaml` (`needs:`) with the reason beside t
 
 ## Fake-fix suite
 
-`tests/test_fixcheck.py` applies the full reference fix, breaks one thing in a way that looks like a fix, and asserts the risk is not fixed (or the need regressed) for the expected reason and with the expected contract flag. 114 fakes (105 fixes, 9 regressions, 48 of them outside contract); see `FAKE_FIXES`, `FAKE_REGRESSIONS`, `REJECTION_REASONS` and `OUTSIDE_CONTRACT` there. `ALTERNATIVE_FIXES` holds honest variants that must still count (literal constants, `import platform_config`, sessions, `SMTP_SSL`, a positional SMTP timeout, hub-level backup and floor, a bounded retry, `Getenv` with an empty `api_key`, a security-group source, the CGNAT VPN range, a `"//"` comment key, exception handling and extra headers around the call).
+`tests/test_fixcheck.py` applies the full reference fix, breaks one thing in a way that looks like a fix, and asserts the risk is not fixed (or the need regressed) for the expected reason and with the expected contract flag. 114 fakes (105 fixes, 9 regressions, 50 of them outside contract); see `FAKE_FIXES`, `FAKE_REGRESSIONS`, `REJECTION_REASONS` and `OUTSIDE_CONTRACT` there. `ALTERNATIVE_FIXES` holds honest variants that must still count (literal constants, `import platform_config`, sessions, `SMTP_SSL`, a positional SMTP timeout, hub-level backup and floor, a bounded retry, `Getenv` with an empty `api_key`, a security-group source, the CGNAT VPN range, a `"//"` comment key, exception handling and extra headers around the call).
 
 ## Remaining limits
 
@@ -83,8 +82,15 @@ What the checker still cannot judge, so a reader can discount the numbers.
 - **The `requests` recorder is a stand-in.** It shows the timeout the code passes, not that the real library honours it (it does; the SMTP path is calibrated against a real server, the `requests` path is not). Code that needs `requests` features the stand-in lacks fails its run and scores not fixed.
 - **Running agent code is not a sandbox.** The child process has a clean environment, blocked network and a 20 s cap, but normal file and process access.
 - **Owner.** Any existing team passes; whether Team Fleet is the right owner is not judged.
-- **Single point of failure is an instance count.** Two instances in one zone, a broker with no standby, or two cron schedulers double-running the nightly job all pass.
+- **Single point of failure is an instance count.** Two fleet-telemetry instances in one zone or a broker with no standby pass. A hub `availability.min_instances` of 2 also gives maintenance-scheduler a second instance, splitting its local SQLite state; that service is no longer scored, so the harm is not counted.
 - **Backup is a policy.** Restores are not tested.
 - **Exposure is security-group CIDRs.** Load balancers, WAF and SSO are not considered, and a narrow public allowlist (an office IP) counts as not fixed by design.
 - **Pins are syntax plus the original range.** Whether a version exists on the registry is not checked.
 - **The bounds are the authors' choices.** The maxima (25 s, 20 s, 50/s) and the 2/s floor reject absurd values; they are pre-registered, not measured.
+
+## Answer key changes before the benchmark
+
+Changes made before the first benchmark run, each with its evidence. After the first run, any change needs a dated note in the folder README and a full re-run.
+
+- **2026-10-05: `bookings-api.no_rate_limit` locator now points at `needs.public_rate_limit_per_client`** (commit 4ce7633), a key a reader can cite in the unchanged repo, instead of `overrides.http.default_rate_limit`, which does not exist until someone adds it. The rule itself did not change.
+- **2026-10-05: `maintenance-scheduler.single_point_of_failure` removed; 11 planted risks remain.** Across 5 dry runs of 03, the worker owning maintenance-scheduler always declined to raise `instances` and gave the right reason: `plan.sqlite` and `history.sqlite` live on `vm-local-disk`, so a second instance splits state, and the contract offers no legal way to move that state first. A risk that cannot be fixed inside the contract measures the answer key, not the workers (the same lesson as folder 01's httpx key). The fixture keeps `instances: 1` as a realistic, unscored fact.

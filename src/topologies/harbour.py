@@ -1,4 +1,4 @@
-"""The Harbour Bikes fixture world: where it lives, its 12 planted risks and its numeric needs."""
+"""The Harbour Bikes fixture world: where it lives, its 11 planted risks and its numeric needs."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,7 +63,6 @@ RISKS = (
     ),
     Risk("notifications", "missing_timeout", "notifications/notifications.py", "send_email(): smtplib.SMTP(timeout=)"),
     Risk("notifications", "unpinned_dependency", "notifications/requirements.txt", "every requirement"),
-    Risk("maintenance-scheduler", "single_point_of_failure", "maintenance-scheduler/service.yaml", "instances"),
     Risk("maintenance-scheduler", "missing_backup", "maintenance-scheduler/service.yaml", "backup"),
 )
 RISKS_BY_ID = {risk.id: risk for risk in RISKS}

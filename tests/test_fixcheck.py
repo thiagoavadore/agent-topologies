@@ -38,8 +38,8 @@ def assert_readable(result):
         assert not outcome.reason.startswith("unreadable input"), (risk_id, outcome.reason)
 
 
-def test_catalogue_has_twelve_risks_and_the_needs_from_the_fixture():
-    assert len(RISKS) == 12 and len(ALL_RISKS) == 12
+def test_catalogue_has_eleven_risks_and_the_needs_from_the_fixture():
+    assert len(RISKS) == 11 and len(ALL_RISKS) == 11
     assert NEEDS["bookings-api.payment_call_timeout"].minimum == "12s"
     assert NEEDS["notifications.smtp_timeout"].minimum == "2s"
     assert NEEDS["pricing-engine.demand_model_timeout"].maximum == "300ms"
@@ -73,7 +73,7 @@ def test_checking_does_not_write_into_the_repo(repo):
     assert sorted(path for path in repo.rglob("*")) == before
 
 
-def test_reference_fix_fixes_all_twelve_and_breaks_nothing(repo):
+def test_reference_fix_fixes_all_eleven_and_breaks_nothing(repo):
     result = check(reference_fix(repo))
     assert sorted(result.fixed) == sorted(ALL_RISKS), {k: v.reason for k, v in result.risks.items() if not v.fixed}
     assert result.regressed == []
@@ -201,7 +201,6 @@ ALTERNATIVE_FIXES = [
             "customer-profiles.missing_backup",
             "maintenance-scheduler.missing_backup",
             "fleet-telemetry.single_point_of_failure",
-            "maintenance-scheduler.single_point_of_failure",
         },
     ),
     (hub_rate_limit_that_suits_payments, {"bookings-api.no_rate_limit"}),
@@ -458,13 +457,13 @@ FAKE_FIXES = {
         "payments-gateway.hardcoded_secret",
         lambda r: replace(r, "payments-gateway/main.go", "[]byte(os.ExpandEnv(string(raw)))", "raw /* was os.ExpandEnv(string(raw)) */"),
     ),
-    # fleet-telemetry.single_point_of_failure and maintenance-scheduler.single_point_of_failure
+    # fleet-telemetry.single_point_of_failure
     "instances as a string": ("fleet-telemetry.single_point_of_failure", lambda r: set_service(r, "fleet-telemetry", "instances", "2")),
     "instances as true": ("fleet-telemetry.single_point_of_failure", lambda r: set_service(r, "fleet-telemetry", "instances", True)),
     "fractional instances": ("fleet-telemetry.single_point_of_failure", lambda r: set_service(r, "fleet-telemetry", "instances", 2.5)),
     "availability floor put in overrides": (
-        "maintenance-scheduler.single_point_of_failure",
-        lambda r: set_service(r, "maintenance-scheduler", "instances", 1) or set_override(r, "maintenance-scheduler", "availability.min_instances", 2),
+        "fleet-telemetry.single_point_of_failure",
+        lambda r: set_service(r, "fleet-telemetry", "instances", 1) or set_override(r, "fleet-telemetry", "availability.min_instances", 2),
     ),
     # fleet-telemetry.no_owner
     "owner TBD": ("fleet-telemetry.no_owner", lambda r: set_service(r, "fleet-telemetry", "owner", {"team": "TBD", "contact": "tbd@harbourbikes.example"})),
@@ -650,7 +649,7 @@ REJECTION_REASONS = {
     'instances as a string': "outside contract: fleet-telemetry instances is '2', not a whole number of at lea",
     'instances as true': 'outside contract: fleet-telemetry instances is True, not a whole number of at le',
     'fractional instances': 'outside contract: fleet-telemetry instances is 2.5, not a whole number of at lea',
-    'availability floor put in overrides': 'outside contract: maintenance-scheduler overrides holds availability.min_instanc',
+    'availability floor put in overrides': 'outside contract: fleet-telemetry overrides holds availability.min_instances',
     'owner TBD': "owner team 'TBD' is not a team in teams.yaml",
     'owner as a bare string': "outside contract: owner is 'Team Fleet', not a mapping with team and contact",
     'owner team that does not exist': "owner team 'Team Telemetry' is not a team in teams.yaml",
@@ -818,7 +817,7 @@ def test_harness_files_are_not_contract_breaches(repo):
     write(repo, "NOTES.md", "merge notes\n")
     write(repo, "bookings-api/__pycache__/bookings_api.cpython-312.pyc", "")
     result = check(repo)
-    assert len(result.fixed) == 12 and result.outside_contract == []
+    assert len(result.fixed) == 11 and result.outside_contract == []
 
 
 def test_contract_text_names_every_rule_family():

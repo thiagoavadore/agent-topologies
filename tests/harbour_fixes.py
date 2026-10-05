@@ -115,10 +115,6 @@ def fix_notifications_pins(repo: Path) -> None:
     write(repo, "notifications/requirements.txt", "celery==5.4.0\nredis==5.2.0\njinja2==3.1.4\nfirebase-admin==6.6.0\n")
 
 
-def fix_scheduler_spof(repo: Path) -> None:
-    set_service(repo, "maintenance-scheduler", "instances", 2)
-
-
 def fix_scheduler_backup(repo: Path) -> None:
     set_service(repo, "maintenance-scheduler", "backup", "daily/30d")
 
@@ -134,7 +130,6 @@ FIXES: dict[str, Callable[[Path], None]] = {
     "admin-console.public_exposure": fix_admin_exposure,
     "notifications.missing_timeout": fix_notifications_timeout,
     "notifications.unpinned_dependency": fix_notifications_pins,
-    "maintenance-scheduler.single_point_of_failure": fix_scheduler_spof,
     "maintenance-scheduler.missing_backup": fix_scheduler_backup,
 }
 

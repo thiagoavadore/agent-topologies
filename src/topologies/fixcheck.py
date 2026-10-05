@@ -483,7 +483,6 @@ RISK_CHECKS: dict[str, Callable[[Repo], str]] = {
     "admin-console.public_exposure": admin_exposure,
     "notifications.missing_timeout": notifications_timeout,
     "notifications.unpinned_dependency": notifications_pins,
-    "maintenance-scheduler.single_point_of_failure": lambda repo: instances_fixed(repo, "maintenance-scheduler"),
     "maintenance-scheduler.missing_backup": lambda repo: backup_fixed(repo, "maintenance-scheduler"),
 }
 assert set(RISK_CHECKS) == {risk.id for risk in RISKS}
