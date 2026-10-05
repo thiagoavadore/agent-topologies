@@ -10,7 +10,7 @@ TODO: written from `results/summary.md` after the benchmark run.
 
 ## The experiment
 
-Four stages review the real files of the Harbour Bikes world (eight services, one shared hub, 12 planted risks; see [`fixtures/harbour-bikes/`](../fixtures/harbour-bikes/) and the catalogue in `src/topologies/harbour.py`). Nothing in this folder writes to those files.
+Four stages review the real files of the Harbour Bikes world (eight services, one shared hub, 11 planted risks; see [`fixtures/harbour-bikes/`](../fixtures/harbour-bikes/) and the catalogue in `src/topologies/harbour.py`). Nothing in this folder writes to those files.
 
 1. **Extract:** facts, each keyed by service, file and locator (a function and call in code, a dotted key path in YAML or JSON).
 2. **Classify:** each risky fact becomes a risk with one of eight categories.

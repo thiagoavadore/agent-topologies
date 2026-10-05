@@ -22,7 +22,7 @@ from pathlib import Path
 from fanout_config import ARMS, AUTOMATED_ARMS, HUMAN_ARM, REDUCER_MODEL, WORKER_MODEL, WORKERS
 from fanout import run_row
 from topologies.guards import SkippedWork, describe_skipped, may_start_group
-from topologies.harbour import HUB_KEYS
+from topologies.harbour import HUB_KEYS, RISKS
 from topologies.model import backend_from_name
 
 HERE = Path(__file__).parent
@@ -105,7 +105,7 @@ def summarise(path: Path) -> str:
         raise ValueError(f"{path.name} mixes models or backends ({len(setups)} setups); summarise one setup per file")
     worker_model, reducer_model, backend, worker_served, reducer_served = setups.pop()
     lines = [
-        "| arm | n | git textual conflicts, mean | contested hub keys, mean | risks fixed of 12, mean (min) | regressions, mean (runs with any) | outside contract, mean | failed-worker runs | report names the failed services | silent success | tokens, mean (workers / reducer / report / shadow) | wall s excl. human, mean |",
+        f"| arm | n | git textual conflicts, mean | contested hub keys, mean | risks fixed of {len(RISKS)}, mean (min) | regressions, mean (runs with any) | outside contract, mean | failed-worker runs | report names the failed services | silent success | tokens, mean (workers / reducer / report / shadow) | wall s excl. human, mean |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     by_arm = {arm: [row for row in rows if row["arm"] == arm] for arm in ARMS}

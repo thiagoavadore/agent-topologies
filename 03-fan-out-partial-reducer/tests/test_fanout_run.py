@@ -23,7 +23,6 @@ def test_split_covers_every_service_once_and_every_shared_key_collides():
     wanting = {
         "http.default_timeout": {"bookings-api.missing_timeout", "notifications.missing_timeout"},
         "backup.policy": {"customer-profiles.missing_backup", "maintenance-scheduler.missing_backup"},
-        "availability.min_instances": {"fleet-telemetry.single_point_of_failure", "maintenance-scheduler.single_point_of_failure"},
     }
     for key, risk_ids in wanting.items():
         assert len({owner[risk_id.split(".")[0]] for risk_id in risk_ids}) >= 2, key
@@ -166,7 +165,7 @@ def test_a_file_outside_the_workers_services_is_invalid():
 def test_score_comes_only_from_the_shared_checker_reference_fix_is_12_of_12_when_overrides_are_allowed():
     workers = {worker: payload(fixes_for(worker)) for worker in WORKERS}
     record = run("overrides-allowed", Script(workers))
-    assert record["score"]["risks_fixed"] == 12 and record["score"]["regressions"] == 0 and record["score"]["outside_contract"] == 0
+    assert record["score"]["risks_fixed"] == 11 and record["score"]["regressions"] == 0 and record["score"]["outside_contract"] == 0
     assert record["conflicts"] == [] and record["override_edits_stripped"] == 0 and record["override_edits_written"] == 2
 
 
@@ -182,7 +181,7 @@ def test_stripped_overrides_and_mandate_rejections_are_counted_per_worker():
         w2 = next(w for w in record["workers"] if w["worker"] == W2)
         assert w2["mandate_rejections"][0]["path"] == "notifications/notifications.py" and "notifications/notifications.py" not in w2["files"]
         assert "notifications/requirements.txt" in w2["files"]  # its other files are kept
-        assert record["score"]["risks_fixed"] == 9 and record["score"]["regressions"] == 0
+        assert record["score"]["risks_fixed"] == 8 and record["score"]["regressions"] == 0
         assert not {"bookings-api.missing_timeout", "bookings-api.no_rate_limit", "notifications.missing_timeout"} & set(record["score"]["fixed"])
         w1 = next(w for w in record["workers"] if w["worker"] == W1)
         assert w1["overrides_stripped"] is True and {e["key"] for e in w1["override_edits"]} == {"http.default_timeout", "http.default_rate_limit"}
@@ -192,7 +191,7 @@ def test_code_local_strips_overrides_but_allows_code_literals():
     workers = {worker: payload(fixes_for(worker)) for worker in WORKERS}
     record = run("code-local", Script(workers))
     assert record["override_edits_stripped"] == 2 and record["mandate_rejections"] == 0
-    assert record["score"]["risks_fixed"] == 10 and "notifications.missing_timeout" in record["score"]["fixed"]
+    assert record["score"]["risks_fixed"] == 9 and "notifications.missing_timeout" in record["score"]["fixed"]
     assert record["effective_timeouts"]["notifications"] == 10.0 and record["effective_timeouts"]["bookings-api"] == 0.3
     assert record["distinct_timeouts"] == 2
 

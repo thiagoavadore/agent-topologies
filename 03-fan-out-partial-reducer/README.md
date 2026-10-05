@@ -23,7 +23,7 @@ The shared world is Harbour Bikes as real files: [`fixtures/harbour-bikes/`](../
 - **The workers** (Claude Sonnet 5.5) answer in one reply with the full new text of every file they change, plus hub changes as `{key, value, reason}`. They have no tools. They get [`CONTRACT.md`](../fixtures/harbour-bikes/CONTRACT.md) verbatim, their own service files and read-only context (`platform.yaml`, `teams.yaml`, `libs/platform_config.py`). The answer key `CHECKER.md` is never copied into the scratch repo.
 - **The harness applies their edits:** it writes the files, applies hub changes to `platform.yaml`, commits in the worker's worktree and merges the branches with real `git merge`. Textual conflicts come from git, per-key conflicts from comparing the hub values the workers set.
 - **Partial failure.** In half the runs of each automated arm (rounded toward failed) one worker returns an invalid payload after its retry, injected by the harness, rotating through the workers. In the human arm the middle run fails. Every arm ends with the same merge report, written by Claude Opus 5.5 and told which workers returned nothing. The score is whether the report names the services that were never fixed or reports success silently (a plain text match on the service names; the report is stored in full).
-- **Scoring** is the shared checker only ([`fixcheck.check()`](../src/topologies/fixcheck.py), rules in [`CHECKER.md`](../fixtures/harbour-bikes/CHECKER.md)): risks fixed of 12, regressions against the numeric needs, and edits that fall outside the contract (reported separately from "not fixed"). It parses and executes files; there is no folder-local rule and no model judging. The predictions were written before any run: [`PREDICTIONS.md`](../PREDICTIONS.md).
+- **Scoring** is the shared checker only ([`fixcheck.check()`](../src/topologies/fixcheck.py), rules in [`CHECKER.md`](../fixtures/harbour-bikes/CHECKER.md)): risks fixed of 11, regressions against the numeric needs, and edits that fall outside the contract (reported separately from "not fixed"). It parses and executes files; there is no folder-local rule and no model judging. The predictions were written before any run: [`PREDICTIONS.md`](../PREDICTIONS.md).
 
 Six arms. Four are platform-mandated and differ in who owns the merge; two are baselines:
 
@@ -40,7 +40,7 @@ Six arms. Four are platform-mandated and differ in who owns the merge; two are b
 
 TODO: table from `results/summary.md`. Every number in this README must come from `results/runs.jsonl`.
 
-| Arm | Runs | Risks fixed of 12 (mean) | Runs with a regression | Outside contract (mean) | Report names the failed services | Tokens per run (mean) |
+| Arm | Runs | Risks fixed of 11 (mean) | Runs with a regression | Outside contract (mean) | Report names the failed services | Tokens per run (mean) |
 |---|---|---|---|---|---|---|
 | `first-wins` | TODO | TODO | TODO | TODO | TODO | TODO |
 | `supervisor-merges` | TODO | TODO | TODO | TODO | TODO | TODO |
