@@ -21,8 +21,4 @@ build-backend = "hatchling.build"
 packages = ["src/topologies"]
 
 [tool.pytest.ini_options]
-<<<<<<< HEAD
-testpaths = ["01-orchestrator-worker/tests", "02-pipeline-checkpoint/tests", "tests"]
-=======
-testpaths = ["01-orchestrator-worker/tests", "03-fan-out-partial-reducer/tests", "tests"]
->>>>>>> rebuild-03
+testpaths = ["01-orchestrator-worker/tests", "02-pipeline-checkpoint/tests", "03-fan-out-partial-reducer/tests", "tests"]
