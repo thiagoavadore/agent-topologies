@@ -49,7 +49,7 @@ class Risk:
 
 RISKS = (
     Risk("bookings-api", "missing_timeout", "bookings-api/bookings_api.py", "charge(): requests.post(timeout=)"),
-    Risk("bookings-api", "no_rate_limit", "bookings-api/service.yaml", "overrides.http.default_rate_limit"),
+    Risk("bookings-api", "no_rate_limit", "bookings-api/service.yaml", "needs.public_rate_limit_per_client"),
     Risk("payments-gateway", "hardcoded_secret", "payments-gateway/config.yaml", "processor.api_key"),
     Risk("fleet-telemetry", "single_point_of_failure", "fleet-telemetry/service.yaml", "instances"),
     Risk("fleet-telemetry", "no_owner", "fleet-telemetry/service.yaml", "owner"),
