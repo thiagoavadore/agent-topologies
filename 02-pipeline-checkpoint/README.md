@@ -34,10 +34,23 @@ Ten runs per arm: even runs are faulted (5), odd runs are clean (5).
 **Metrics.**
 
 - Per injected fault: `caught-stage-N`, or `reached-production` when no checkpoint stopped it and the stage-4 plan has no grounded finding for the attacked risk. `absorbed` (not caught, but the plan still has the finding) and `no-verdict` (the run ended on a failed stage or an unreadable gate) are reported, not hidden. There is no `not-injected` outcome; the code asserts it cannot happen.
-- Per arm: tokens (total and the gate share), and false rejections (clean runs a checkpoint stopped).
+- Per arm: tokens (total and the gate share), and the checkpoint rejections of clean runs, split into false and justified (see "The checkpoint was wrong the first time").
 - **Evidence-grounded recall:** a plan item counts only if it names the right risk ID (service and category) and cites the risk's file and locator. Measured only on runs that reach stage 4, with the number of such runs shown beside it. A run a checkpoint stops has no plan, so an arm that stops more runs is scored on fewer.
 
 Predictions were written before any run: [`PREDICTIONS.md`](../PREDICTIONS.md). The benchmark refuses to start while that file says `DRAFT`.
+
+## The checkpoint was wrong the first time
+
+*2026-10-05.* In the first benchmark, `every-handoff` stopped **5 of 5 clean runs**. Four were stopped at the stage-2 gate, one at the stage-1 gate. The stage-2 reasons demanded that facts outside the eight categories (a shared admin password with no SSO, a missing alert on a delete-all job) be classified. Stage 2 is not allowed to classify those: it only has eight categories. The gate had been told "nothing that bears on operational risk dropped" and had never been told the stage's contract, so it judged stage 2 against a bar the stage could not meet.
+
+Run on the same rows with the rule below, the five clean rejections split into 4 false and 1 justified (run 4: stage 2 really lost a catalogue risk it had been given). Of the five faulted `every-handoff` runs, four were stopped at stage 1 for the injected fault, and those reasons name the right misattributed or missing fact. The fifth (run 7, a dropped `bookings-api.missing_timeout`) was stopped at stage 2 for a risk stage 2 had not lost, so that fault was never seen and the stop was false. The other arms, with no gate before stage 4, stopped nothing: `none` and `end-only` had 0 of 5 clean rejections.
+
+What changed:
+
+- Each gate now gets the judged stage's own contract: the stage's output schema, the category list (stages 2 to 4), and what the stage may drop by design (stage 2: facts that fit no category; stages 3 and 4: nothing). All four gates use the same wording pattern, in `gate_system()`.
+- Rejections are split without a model. A rejection is **justified** when the judged stage's output lacks a catalogue risk whose fact is in its input (for stage 1, the files hold every risk), and **false** otherwise. On a faulted run, a rejection whose lost risks include the injected target counts as the injected fault. The summary reports `false rejections` and `justified rejections` for clean runs, and the justified / false split for other rejections on faulted runs.
+
+The first runs are kept in [`results/2026-10-05-v1-gate-contract-mismatch.jsonl`](results/2026-10-05-v1-gate-contract-mismatch.jsonl) (summary beside it). The lesson, same as in folder 01: whoever writes the checker decides the result, and that includes the gate.
 
 ## Run it
 

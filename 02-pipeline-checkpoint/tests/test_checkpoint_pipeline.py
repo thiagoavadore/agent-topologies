@@ -14,9 +14,9 @@ sys.path.insert(0, str(HERE))
 import ckpt_runs
 from ckpt_faults import FAULT_KINDS, FAULT_TARGETS, Fault, inject, locator_matches, target_facts
 from ckpt_pipeline import (
-    ARMS, GATE_SYSTEM, STAGE_SYSTEMS, PipelineRecord, StageResult, load_world, run_checkpoint, run_pipeline, stage_system,
+    ARMS, CATEGORIES, GATE_SYSTEMS, STAGE_NAMES, stage_schema, STAGE_MAY_DROP, STAGE_SYSTEMS, PipelineRecord, StageResult, load_world, run_checkpoint, run_pipeline, stage_system,
 )
-from ckpt_scoring import fault_outcome, owner_mismatch, score_plan
+from ckpt_scoring import classify_rejection, false_rejection, fault_outcome, owner_mismatch, score_plan
 from topologies.harbour import FIXTURE, RISKS, RISKS_BY_ID, SERVICES
 from topologies.model import ScriptedBackend
 
@@ -51,16 +51,17 @@ def risks_of(items: list[dict]) -> list[dict]:
 class Model:
     """Scripted stages and an oracle gate: fails stage 1 on a misattributed fact or a missing risk fact, passes the rest."""
 
-    def __init__(self, *, skip_files_first_call: set[str] = frozenset(), skip_files_always: set[str] = frozenset(), gate_verdict: str | None = None):
+    def __init__(self, *, skip_files_first_call: set[str] = frozenset(), skip_files_always: set[str] = frozenset(), gate_verdict: str | None = None, gate_fail_after: int | None = None, drop_at_stage2: str | None = None):
         self.calls: list[tuple[str, str]] = []
         self.skip_first, self.skip_always, self.gate_verdict = skip_files_first_call, skip_files_always, gate_verdict
+        self.gate_fail_after, self.drop_at_stage2 = gate_fail_after, drop_at_stage2
         self.stage_one_calls = 0
 
     def backend(self) -> ScriptedBackend:
         return ScriptedBackend(self.respond)
 
     def respond(self, system: str, prompt: str) -> str:
-        if system == GATE_SYSTEM:
+        if system in GATE_SYSTEMS.values():
             self.calls.append(("gate", prompt))
             return json.dumps(self.gate(prompt))
         stage = SYSTEM_TO_STAGE[system]
@@ -72,6 +73,8 @@ class Model:
         data = json.loads(prompt)
         key = {2: "facts", 3: "risks", 4: "ranked"}[stage]
         found = risks_of(data[key])
+        if stage == 2 and self.drop_at_stage2:
+            found = [item for item in found if f"{item['service']}.{item['category']}" != self.drop_at_stage2]
         with_risk = {item["service"] for item in found}
         quiet = [s for s in SERVICES if s not in with_risk]
         found = [{k: v for k, v in item.items() if k not in ("fact", "priority", "reason")} for item in found] if stage > 2 else found
@@ -82,6 +85,9 @@ class Model:
         return json.dumps({"plan": [{**item, "priority": n + 1, "action": "a"} for n, item in enumerate(found)], "no_risk_services": quiet})
 
     def gate(self, prompt: str) -> dict:
+        if self.gate_fail_after is not None:
+            verdict = "fail" if f"Stage {self.gate_fail_after} (" in prompt else "pass"
+            return {"verdict": verdict, "reason": "scripted"}
         if self.gate_verdict:
             return {"verdict": self.gate_verdict, "reason": "scripted"}
         if "Stage 1 (extract)" in prompt:
@@ -184,6 +190,50 @@ def test_end_only_catch_is_blamed_on_stage_four():
 def test_clean_run_stopped_by_a_checkpoint_is_a_false_rejection():
     record, _ = run("every-handoff", None, Model(gate_verdict="fail"))
     assert ckpt_runs.false_rejection(record, None) and record.caught_at_stage == 1
+
+
+def test_rejection_is_justified_when_the_stage_lost_a_risk_it_was_given():
+    model = Model(gate_fail_after=2, drop_at_stage2="admin-console.public_exposure")
+    record, _ = run("every-handoff", None, model)
+    assert record.caught_at_stage == 2
+    assert classify_rejection(record, None) == "justified" and not false_rejection(record, None)
+
+
+def test_rejection_is_false_when_the_stage_lost_nothing():
+    record, _ = run("every-handoff", None, Model(gate_fail_after=2))
+    assert classify_rejection(record, None) == "false" and false_rejection(record, None)
+
+
+def test_a_stage_is_not_blamed_for_a_risk_its_input_never_had():
+    fault = Fault("dropped", "admin-console.public_exposure")
+    record, _ = run("every-handoff", fault, Model(gate_fail_after=2))
+    assert classify_rejection(record, fault) == "false"
+
+
+def test_injected_fault_is_the_cause_of_a_stage_one_rejection():
+    for kind in FAULT_KINDS:
+        fault = Fault(kind, "payments-gateway.hardcoded_secret")
+        record, _ = run("every-handoff", fault)
+        assert classify_rejection(record, fault) == "injected-fault"
+
+
+def test_no_rejection_without_a_failed_checkpoint():
+    record, _ = run("every-handoff", None)
+    assert classify_rejection(record, None) is None
+
+
+@pytest.mark.parametrize("stage", [1, 2, 3, 4])
+def test_each_gate_is_given_its_stage_contract(stage):
+    system = GATE_SYSTEMS[stage]
+    assert "Judge the stage's output against this stage's own contract" in system
+    assert STAGE_MAY_DROP[stage] in system and stage_schema(stage, ["<path>"])["required"][0] in system
+    assert f"after stage {stage} ({STAGE_NAMES[stage]})" in system
+    assert all(name in system for name in CATEGORIES) == (stage > 1)
+
+
+def test_stage_two_gate_may_not_fail_for_facts_that_fit_no_category():
+    assert "fit none of the eight categories" in GATE_SYSTEMS[2]
+    assert "Do not fail for anything the stage may drop by design" in GATE_SYSTEMS[2]
 
 
 def test_contract_check_fails_without_a_gate_call_when_a_service_is_missing():
@@ -298,6 +348,7 @@ def test_experiment_writes_rows_and_summary(tmp_path, monkeypatch):
         assert {"stages", "checkpoints", "plan", "served_models", "total_tokens", "gate_tokens", "wall_seconds"} <= set(row)
     summary = ckpt_runs.summarise(out)
     assert "| every-handoff | claude-sonnet-5-5, claude-cli | 4 (2 / 2)" in summary
+    assert "justified rejections (clean runs)" in summary and "other rejections (faulted runs: justified / false)" in summary
     assert "caught-stage-1" in summary and "runs that reached stage 4" in summary
 
 

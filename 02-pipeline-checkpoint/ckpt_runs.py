@@ -9,7 +9,7 @@ from pathlib import Path
 
 from ckpt_faults import FAULT_KINDS, FAULT_TARGETS, Fault
 from ckpt_pipeline import ARMS, PipelineRecord, load_world, run_pipeline
-from ckpt_scoring import false_rejection, fault_outcome, owner_mismatch, score_plan
+from ckpt_scoring import classify_rejection, false_rejection, fault_outcome, owner_mismatch, score_plan
 from topologies.guards import describe_skipped
 from topologies.model import backend_from_name
 
@@ -51,6 +51,7 @@ def run_row(record: PipelineRecord, fault: Fault | None, *, run: int, backend: s
         "injection": dataclasses.asdict(record.injection) if record.injection else None,
         "fault_outcome": fault_outcome(record, fault),
         "owner_mismatch": owner_mismatch(record, fault),
+        "rejection": classify_rejection(record, fault),
         "false_rejection": false_rejection(record, fault),
         "status": record.status,
         "caught_at_stage": record.caught_at_stage,
@@ -99,8 +100,8 @@ def summarise(path: Path) -> str:
         return f"No runs at {path}."
     rows = load_rows(path)
     lines = [
-        "| arm | model, backend | runs (faulted / clean) | fault outcomes | tokens, mean (min to max) | gate share of tokens | false rejections (clean runs) | recall, mean (runs that reached stage 4) | recall, mean (clean runs that reached stage 4) | wall s, mean |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| arm | model, backend | runs (faulted / clean) | fault outcomes | tokens, mean (min to max) | gate share of tokens | false rejections (clean runs) | justified rejections (clean runs) | other rejections (faulted runs: justified / false) | recall, mean (runs that reached stage 4) | recall, mean (clean runs that reached stage 4) | wall s, mean |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for arm in ARMS:
         runs = [row for row in rows if row["arm"] == arm]
@@ -123,6 +124,8 @@ def summarise(path: Path) -> str:
             f"| {statistics.mean(tokens):,.0f} ({min(tokens):,} to {max(tokens):,}) "
             f"| {gate_share:.0%} "
             f"| {sum(row['false_rejection'] for row in clean)} of {len(clean)} "
+            f"| {sum(row['rejection'] == 'justified' for row in clean)} of {len(clean)} "
+            f"| {sum(row['rejection'] == 'justified' for row in faulted)} / {sum(row['rejection'] == 'false' for row in faulted)} "
             f"| {recall_text} "
             f"| {clean_recall_text} "
             f"| {statistics.mean(row['wall_seconds'] for row in runs):.0f} |"
@@ -131,7 +134,7 @@ def summarise(path: Path) -> str:
     for row in sorted((r for r in rows if r["fault"]), key=lambda r: (r["run"], list(ARMS).index(r["arm"]))):
         fault = row["fault"]
         failing = [c for c in row["checkpoints"] if c["verdict"] != "pass"]
-        reason = f"{failing[0]['check']}: {failing[0]['reason']}" if failing else ""
+        reason = f"{failing[0]['check']} ({row['rejection']}): {failing[0]['reason']}" if failing else ""
         blamed = row["caught_at_stage"] if row["caught_at_stage"] is not None else ""
         lines.append(f"| {row['run']} | {row['arm']} | {fault['kind']} {fault['risk_id']} | {row['fault_outcome']} | {blamed} | {reason} |")
     unusual = [f"{row['arm']} run {row['run']}: {row['status']}" for row in rows if row["status"] in ("stage_failed", "checkpoint_error", "over_budget")]

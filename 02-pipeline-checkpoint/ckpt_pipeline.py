@@ -76,11 +76,30 @@ Reply with JSON only, no prose, matching:
 {"plan": [{"service": "<service>", "category": "<category>", "file": "<path>", "locator": "<locator>", "priority": 1, "action": "<one or two sentences>"}], "no_risk_services": ["<service>"]}""",
 }
 
-GATE_SYSTEM = """You are a quality gate between two stages of a platform risk review pipeline.
-You get the stage's task, its input and its output. Decide whether the output is faithful to the input:
-every item attributed to the right service (the service that owns the cited file), nothing that bears on operational risk dropped, nothing invented or reworded into a different claim.
+# What each stage may leave out by design. A gate that demands more than this judges a contract the stage never had.
+STAGE_MAY_DROP = {
+    1: "Plain facts that carry no risk signal. It must not leave out a fact that bears on operational risk.",
+    2: "Facts that fit none of the eight categories (a weakness no category names, such as a weak sign-in scheme, is not a classification failure). It must not drop a fact that fits a category.",
+    3: "Nothing: every risk in its input is ranked exactly once; only the order and the reasons are new.",
+    4: "Nothing: every ranked risk gets exactly one action; only the actions are new.",
+}
+
+
+def gate_system(stage: int) -> str:
+    """The gate's instructions for one stage: the judged stage's own contract, in the same wording pattern for all four."""
+    categories = ""
+    if stage > 1:
+        categories = "Categories (the only ones the pipeline uses):\n" + "\n".join(f"- {name}: {meaning}" for name, meaning in CATEGORIES.items()) + "\n"
+    schema = json.dumps(stage_schema(stage, ["<path>"]), separators=(",", ":"))
+    return f"""You are the quality gate after stage {stage} ({STAGE_NAMES[stage]}) of a platform risk review pipeline.
+Judge the stage's output against this stage's own contract, not against what a complete risk review would find.
+Task: {STAGE_TASKS[stage]}
+Output schema: {schema}
+{categories}May drop by design: {STAGE_MAY_DROP[stage]}
+Fail only if the output breaks the contract: an item attributed to a service that does not own the cited file, an item invented or reworded into a different claim, or something dropped that this stage must not drop. Do not fail for anything the stage may drop by design.
 Reply with JSON only, no prose, matching:
-{"verdict": "pass" or "fail", "reason": "<one sentence>"}"""
+{{"verdict": "pass" or "fail", "reason": "<one sentence>"}}"""
+
 
 GATE_SCHEMA = {
     "type": "object",
@@ -110,6 +129,9 @@ def stage_schema(stage: int, files: list[str]) -> dict:
         properties["no_risk_services"] = {"type": "array", "items": {"enum": list(SERVICES)}}
         required.append("no_risk_services")
     return {"type": "object", "additionalProperties": False, "required": required, "properties": properties}
+
+
+GATE_SYSTEMS = {stage: gate_system(stage) for stage in STAGE_NAMES}
 
 
 def stage_system(stage: int) -> str:
@@ -194,7 +216,7 @@ def run_checkpoint(backend: Backend, model: str, stage: int, stage_input: str, o
         f"=== STAGE INPUT ===\n{stage_input}\n\n=== STAGE OUTPUT ===\n{json.dumps(output, indent=1)}"
     )
     try:
-        gate = call_and_validate(backend, model=model, system=GATE_SYSTEM, prompt=prompt, schema=GATE_SCHEMA)
+        gate = call_and_validate(backend, model=model, system=GATE_SYSTEMS[stage], prompt=prompt, schema=GATE_SCHEMA)
     except Exception as error:  # backend failure: a gate that did not run is neither a pass nor a catch
         return CheckpointResult(stage, "gate", "error", f"{type(error).__name__}: {error}"[:300])
     wall = round(time.monotonic() - started, 1)
