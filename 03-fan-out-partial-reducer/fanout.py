@@ -17,13 +17,14 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from fanout_arms import HubChange, Spend, first_wins, group_by_key, hub_owner_decide, human_pick, options_of, supervisor_pick
-from fanout_config import ARMS, REDUCER_MODEL, WORKER_MODEL, WORKERS
+from fanout_config import ARMS, OVERRIDES_ALLOWED_ARM, REDUCER_MODEL, WORKER_MODEL, WORKERS
 from fanout_hubfile import parse_hub, set_hub_values
+from fanout_overrides import effective_timeouts, grant_override, override_edits, service_overrides, strip_overrides
 from fanout_prompts import REPORT_SYSTEM, report_prompt, service_paths, worker_prompt, worker_schema, worker_system
 from fanout_repo import ScratchRepo
 from topologies.fixcheck import CheckResult, check
 from topologies.guards import InvalidAfterRetry, SkippedWork, call_and_validate, describe_skipped
-from topologies.harbour import FIXTURE, HUB_FILE
+from topologies.harbour import FIXTURE, HUB_FILE, SERVICES
 from topologies.model import Backend
 
 FAILED_STATUSES = ("invalid", "error", "injected-failure")
@@ -41,6 +42,8 @@ class WorkerRun:
     files: dict[str, str] = field(default_factory=dict)  # changed files only, full new text
     hub_changes: list[dict] = field(default_factory=list)
     notes: str = ""
+    override_edits: list[dict] = field(default_factory=list)  # {service, key, value}: overrides the worker wrote
+    overrides_stripped: bool = False  # True when the arm forbids worker overrides and the harness removed them
     error: str = ""
     commit_order: int | None = None
     wall_seconds: float = 0.0
@@ -86,6 +89,15 @@ def run_worker(
     else:
         payload = outcome.payload
         run.files = {item["path"]: item["content"] for item in payload["files"] if item["content"] != base_files[item["path"]]}
+        run.overrides_stripped = arm != OVERRIDES_ALLOWED_ARM
+        for path in list(run.files):
+            if not path.endswith("/service.yaml"):
+                continue
+            edits = override_edits(base_files[path], run.files[path])
+            run.override_edits += [{"service": path.split("/")[0], **edit} for edit in edits]
+            if edits and run.overrides_stripped:
+                run.files[path] = strip_overrides(base_files[path], run.files[path])
+        run.files = {path: text for path, text in run.files.items() if text != base_files[path]}
         run.hub_changes = [{**item, "value": str(item["value"]).strip()} for item in payload["hub_changes"]]
         run.notes = payload.get("notes", "")
         files = dict(run.files)
@@ -186,8 +198,9 @@ def run_fanout(
         resolutions: list[dict] = []
         final_hub = dict(base_hub)
 
+        grants: list[dict] = []
         if arm == "hub-owner":
-            decided, owner_error = hub_owner_decide(backend, reducer_model, hub_text, changes, reducer)
+            decided, grants, owner_error = hub_owner_decide(backend, reducer_model, hub_text, changes, reducer)
             for key, items in by_key.items():
                 options = options_of(items)
                 if key in decided:
@@ -217,7 +230,7 @@ def run_fanout(
             for index, (key, items) in enumerate(contested.items(), start=1):
                 options = options_by_key[key]
                 record = {"key": key, "base_value": base_hub[key], "options": options, "contested": True}
-                if arm == "first-wins":
+                if arm in ("first-wins", OVERRIDES_ALLOWED_ARM):
                     pick = first_wins(items)
                 elif arm == "supervisor-merges":
                     pick = supervisor_pick(backend, reducer_model, hub_text, key, base_hub[key], options, items, reducer)
@@ -225,22 +238,31 @@ def run_fanout(
                     pick = {
                         **human_pick(index, len(contested), key, base_hub[key], options, ask, show),
                         "supervisor_value": shadows[key]["value"], "supervisor_reason": shadows[key]["reason"],
-                        "supervisor_decided_by": shadows[key]["decided_by"],
+                        "supervisor_decided_by": shadows[key]["decided_by"], "supervisor_overrides": shadows[key]["overrides"],
                     }
                 resolutions.append({**record, **pick})
                 final_hub[key] = pick["value"]
+                grants += pick["overrides"]
+
+        granted_files = {}
+        for grant in grants:
+            path = f"{grant['service']}/service.yaml"
+            granted_files[path] = grant_override(granted_files.get(path) or (merged / path).read_text(encoding="utf-8"), grant["key"], grant["value"])
+        repo.write(merged, granted_files)
 
         repo.write(merged, {HUB_FILE: set_hub_values(hub_text, {key: value for key, value in final_hub.items() if value != base_hub[key]})})
         repo.commit(merged, "merge: hub resolution")
         final_hub_read = parse_hub((merged / HUB_FILE).read_text(encoding="utf-8"))
         merged_diff = repo.diff("merged")
+        timeouts = effective_timeouts(merged, SERVICES, final_hub_read["http.default_timeout"])
+        overrides_in_merged = service_overrides(merged, SERVICES)
         result = check(merged)
 
     failed_services = [service for run in runs if run.failed for service in run.services]
     skipped = [SkippedWork(run.worker, f"{run.status}: services {', '.join(run.services)} not fixed") for run in runs if run.failed]
     report, report_error = "", ""
     try:
-        reply = backend.call(model=reducer_model, system=REPORT_SYSTEM, prompt=report_prompt(runs, base_hub, final_hub_read, resolutions))
+        reply = backend.call(model=reducer_model, system=REPORT_SYSTEM, prompt=report_prompt(runs, base_hub, final_hub_read, resolutions, grants))
         report = reply.text
         report_spend.add(reply.total_tokens, reply.served_models)
     except Exception as error:
@@ -260,6 +282,13 @@ def run_fanout(
         "resolutions": resolutions,
         "final_hub": final_hub_read,
         "merged_diff": merged_diff,
+        "overrides_granted": grants,
+        "override_edits_by_worker": {run.worker: len(run.override_edits) for run in runs},
+        "override_edits_stripped": sum(len(run.override_edits) for run in runs if run.overrides_stripped),
+        "override_edits_written": sum(len(run.override_edits) for run in runs if not run.overrides_stripped),
+        "overrides_in_merged": overrides_in_merged,
+        "effective_timeouts": timeouts,
+        "distinct_timeouts": len(set(timeouts.values())),
         "score": score_record(result),
         "failed_services": failed_services,
         "named_failed_services": named_failed,

@@ -20,7 +20,7 @@ def test_failure_schedule_rounds_toward_failed_and_rotates_workers():
 
 def test_arm_order_rotates_per_run():
     arms = list(AUTOMATED_ARMS)
-    assert [experiment.rotated(arms, i)[0] for i in range(4)] == [arms[0], arms[1], arms[2], arms[0]]
+    assert [experiment.rotated(arms, i)[0] for i in range(5)] == [arms[0], arms[1], arms[2], arms[3], arms[0]]
     assert sorted(experiment.rotated(arms, 1)) == sorted(arms)
 
 
@@ -41,6 +41,7 @@ def test_summary_has_one_line_per_arm_the_key_table_and_the_human_table(tmp_path
     for arm in ARMS:
         assert f"| {arm} | 1 |" in table
     assert "Human decisions, one row per conflict" in table and "| http.default_timeout | 1 of 1 | 1 of 1 | 1 of 1 | 1 of 1 |" in table
+    assert "Service overrides (who wrote them" in table and "| overrides-allowed | 0.0 | 0.0 |" in table
     assert "silent success" in table and "Workers w (served: not reported)" in table
 
 

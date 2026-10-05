@@ -9,6 +9,8 @@ WORKERS = {
     "w2": ["notifications", "customer-profiles", "fleet-telemetry"],
     "w3": ["pricing-engine", "payments-gateway"],
 }
-ARMS = ("first-wins", "supervisor-merges", "hub-owner", "human-decides")
+ARMS = ("first-wins", "supervisor-merges", "hub-owner", "overrides-allowed", "human-decides")
 AUTOMATED_ARMS = tuple(arm for arm in ARMS if arm != "human-decides")
 HUMAN_ARM = "human-decides"
+# Only the merge owner may write service.yaml overrides; in `overrides-allowed` every worker may write its own.
+OVERRIDES_ALLOWED_ARM = "overrides-allowed"

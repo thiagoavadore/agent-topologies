@@ -163,12 +163,100 @@ def test_a_file_outside_the_workers_services_is_invalid():
     assert next(w for w in record["workers"] if w["worker"] == W1)["status"] == "invalid"
 
 
-def test_score_comes_only_from_the_shared_checker_reference_fix_is_12_of_12():
+def test_score_comes_only_from_the_shared_checker_reference_fix_is_12_of_12_when_overrides_are_allowed():
     workers = {worker: payload(fixes_for(worker)) for worker in WORKERS}
-    for arm in ("first-wins", "hub-owner"):
+    record = run("overrides-allowed", Script(workers))
+    assert record["score"]["risks_fixed"] == 12 and record["score"]["regressions"] == 0 and record["score"]["outside_contract"] == 0
+    assert record["conflicts"] == [] and record["override_edits_stripped"] == 0 and record["override_edits_written"] == 2
+
+
+def test_owned_arms_strip_worker_overrides_and_count_them_per_worker():
+    workers = {worker: payload(fixes_for(worker)) for worker in WORKERS}
+    for arm in ("first-wins", "supervisor-merges", "hub-owner", "human-decides"):
         record = run(arm, Script(workers))
-        assert record["score"]["risks_fixed"] == 12 and record["score"]["regressions"] == 0 and record["score"]["outside_contract"] == 0
-        assert record["conflicts"] == []
+        assert record["override_edits_by_worker"] == {W1: 2, W2: 0, W3: 0}
+        assert record["override_edits_stripped"] == 2 and record["override_edits_written"] == 0
+        assert record["overrides_in_merged"] == {}
+        # the stripped overrides carried bookings-api's timeout and rate limit; everything else still counts
+        assert record["score"]["risks_fixed"] == 10 and record["score"]["regressions"] == 0
+        assert set(record["score"]["risks"][rid]["fixed"] for rid in ("bookings-api.missing_timeout", "bookings-api.no_rate_limit")) == {False}
+        w1 = next(w for w in record["workers"] if w["worker"] == W1)
+        assert w1["overrides_stripped"] is True and {e["key"] for e in w1["override_edits"]} == {"http.default_timeout", "http.default_rate_limit"}
+        assert "overrides:" not in w1["files"]["bookings-api/service.yaml"].replace("overrides: {}", "")
+
+
+def test_overrides_allowed_keeps_worker_overrides_and_records_how_far_the_platform_forked():
+    workers = {worker: payload(fixes_for(worker)) for worker in WORKERS}
+    record = run("overrides-allowed", Script(workers))
+    assert set(record["overrides_in_merged"]) == {"bookings-api"}
+    assert record["effective_timeouts"]["bookings-api"] == "15s" and record["effective_timeouts"]["pricing-engine"] == "300ms"
+    assert record["distinct_timeouts"] == 2
+
+
+def test_worker_prompt_differs_between_arms_only_in_the_override_rule():
+    owned, allowed = Script(colliding_payloads()), Script(colliding_payloads())
+    run("first-wins", owned)
+    run("overrides-allowed", allowed)
+    owned_system = next(s for r, s, _ in owned.prompts if r == "worker")
+    allowed_system = next(s for r, s, _ in allowed.prompts if r == "worker")
+    assert "may not write `overrides:`" in owned_system and "Addendum to rule 2" in owned_system
+    assert "write `overrides:` in your own service.yaml" in allowed_system and "Addendum" not in allowed_system
+    for text in (owned_system, allowed_system):
+        assert "convention" not in text and "at the hub" not in text and "hold back" not in text
+
+
+def test_supervisor_can_grant_an_override_and_sees_every_services_needs():
+    reply = json.dumps({"value": "300ms", "reason": "pricing-engine needs 300ms", "overrides": [
+        {"service": "bookings-api", "key": "http.default_timeout", "value": "15s", "reason": "payment call needs 12s"}]})
+    script = Script(colliding_payloads(), supervisor=reply)
+    record = run("supervisor-merges", script)
+    [grant] = record["overrides_granted"]
+    assert grant["service"] == "bookings-api" and grant["by"] == "supervisor"
+    assert record["overrides_in_merged"] == {"bookings-api": {"http.default_timeout": "15s"}}
+    assert record["effective_timeouts"]["bookings-api"] == "15s" and record["final_hub"]["http.default_timeout"] == "300ms"
+    assert record["score"]["regressions"] == 0 and "bookings-api.missing_timeout" in record["score"]["fixed"]
+    [prompt] = script.prompts_for("supervisor")
+    assert "pricing-engine demand_model_timeout: at most 300ms" in prompt and "payments-gateway inbound_rate_per_caller: at least 20/s" in prompt
+    assert "bookings-api payment_call_timeout: between 12s and 25s" in prompt and "notifications smtp_timeout: between 2s and 20s" in prompt
+    [report_prompt] = script.prompts_for("report")
+    assert "bookings-api: http.default_timeout = 15s (payment call needs 12s)" in report_prompt
+
+
+def test_hub_owner_can_grant_an_override_too():
+    reply = json.dumps({"hub": [{"key": "http.default_timeout", "value": "300ms", "reason": "pricing"}], "overrides": [
+        {"service": "notifications", "key": "http.default_timeout", "value": "5s", "reason": "smtp needs 2s"}]})
+    script = Script(colliding_payloads(), hub_owner=reply)
+    record = run("hub-owner", script)
+    assert record["overrides_granted"][0]["by"] == "hub-owner" and record["effective_timeouts"]["notifications"] == "5s"
+    assert "pricing-engine demand_model_timeout: at most 300ms" in script.prompts_for("hub-owner")[0]
+
+
+def test_first_wins_and_the_baseline_never_grant_anything_and_never_call_a_reducer_for_a_conflict():
+    for arm in ("first-wins", "overrides-allowed"):
+        script = Script(colliding_payloads())
+        record = run(arm, script)
+        assert record["overrides_granted"] == [] and script.prompts_for("supervisor") == [] and script.prompts_for("hub-owner") == []
+
+
+def test_human_can_grant_an_override_then_pick_a_value():
+    answers = iter(["o", "nope", "bookings-api", "", "15s", "e", "300ms"])
+    shown = []
+    record = run("human-decides", Script(colliding_payloads()), ask=lambda _: next(answers), show=shown.append)
+    [conflict] = record["conflicts"]
+    assert conflict["overrides"] == [{"service": "bookings-api", "key": "http.default_timeout", "value": "15s", "reason": "granted by the human", "by": "human"}]
+    assert record["effective_timeouts"]["bookings-api"] == "15s" and record["final_hub"]["http.default_timeout"] == "300ms"
+    assert "[o]verride" in shown[0] and "pricing-engine demand_model_timeout: at most 300ms" in shown[0]
+    assert conflict["supervisor_overrides"] == []
+
+
+def test_override_is_not_offered_for_a_key_that_has_no_override():
+    payloads = colliding_payloads()
+    payloads[W1] = payload({}, [("backup.policy", "weekly/28d", "cheap")])
+    payloads[W2] = payload({}, [("backup.policy", "daily/30d", "safe")])
+    shown = []
+    answers = iter(["o", "a"])
+    record = run("human-decides", Script(payloads), ask=lambda _: next(answers), show=shown.append)
+    assert "[o]verride" not in shown[0] and record["conflicts"][0]["overrides"] == []
 
 
 def test_unchanged_world_scores_zero_with_reasons_per_risk():
