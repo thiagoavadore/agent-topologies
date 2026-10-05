@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fanout_config import OVERRIDES_ALLOWED_ARM, WORKERS
+from fanout_config import CODE_LOCAL_ARM, MANDATED_ARMS, OVERRIDES_ALLOWED_ARM, WORKERS
 from fanout_overrides import HTTP_KEYS
 from topologies.harbour import HUB_FILE, HUB_KEYS, NEED_MEASURES, NEEDS, SERVICES, world_files, worker_contract
 
@@ -81,7 +81,7 @@ You see the platform file platform.yaml, teams.yaml and libs/platform_config.py 
 Find every operational risk in your services (hardcoded secrets, outbound calls that can wait forever, single points of failure, a missing owner, unpinned dependencies, data kept on a disk or VM with no backup, internal surfaces open to the internet, public endpoints with no rate limit) and fix each one. Each service.yaml lists `needs` the service must keep meeting.
 Platform defaults live in platform.yaml and every service inherits them.
 {override_rule}
-{hub_rule}
+{mandate}{hub_rule}
 The rules for changing the services (fixes are scored automatically by reading the files; a change outside these rules does not count):
 
 {contract}
@@ -91,6 +91,8 @@ The rules for changing the services (fixes are scored automatically by reading t
 
 OVERRIDE_RULE_ALLOWED = "You may edit your own service files, propose platform values through hub_changes, and write `overrides:` in your own service.yaml."
 OVERRIDE_RULE_OWNED = "You may edit your own service files and propose platform values through hub_changes. You may not write `overrides:` in any service.yaml: only the merge owner grants an override, and an override you write is removed."
+OVERRIDE_RULE_NONE = "You may edit your own service files and propose platform values through hub_changes. You may not write `overrides:` in any service.yaml; an override you write is removed."
+MANDATE_RULE = 'Platform mandate: the timeout of the outbound call in `charge()` or `send_email()` must be `http_timeout("<service>")`, imported as in rule 3. Any other form is rejected and your edit to that file is reverted.\n'
 ADDENDUM_OWNED = "Addendum to rule 2 for this task: do not write `overrides:`; the merge owner may grant one.\n\n"
 
 HUB_RULE_OWN_COPY = "Your hub_changes are written to platform.yaml in your own copy of the repo."
@@ -111,12 +113,13 @@ REPORT_SYSTEM = """You own the merge of a parallel fix across services. Write th
 
 def worker_system(arm: str) -> str:
     hub_rule = HUB_RULE_REQUESTS if arm == "hub-owner" else HUB_RULE_OWN_COPY
-    owned = arm != OVERRIDES_ALLOWED_ARM
+    override_rule = {OVERRIDES_ALLOWED_ARM: OVERRIDE_RULE_ALLOWED, CODE_LOCAL_ARM: OVERRIDE_RULE_NONE}.get(arm, OVERRIDE_RULE_OWNED)
     return WORKER_SYSTEM.format(
-        override_rule=OVERRIDE_RULE_OWNED if owned else OVERRIDE_RULE_ALLOWED,
+        override_rule=override_rule,
+        mandate=MANDATE_RULE if arm in MANDATED_ARMS else "",
         hub_rule=hub_rule,
         contract=worker_contract(),
-        addendum=ADDENDUM_OWNED if owned else "",
+        addendum="" if arm == OVERRIDES_ALLOWED_ARM else ADDENDUM_OWNED,
     )
 
 

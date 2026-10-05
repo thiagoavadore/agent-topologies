@@ -4,6 +4,10 @@ from pathlib import Path
 
 import yaml
 
+from topologies.fixcheck import BOOKINGS_CALL, NOTIFICATIONS_CALL, parse_duration
+from topologies.harbour import OutsideContract
+from topologies.pytimeouts import Unresolved, effective_timeout
+
 HTTP_KEYS = ("http.default_timeout", "http.default_rate_limit")
 
 
@@ -51,7 +55,17 @@ def service_overrides(root: Path, services: tuple[str, ...]) -> dict[str, dict]:
     return found
 
 
-def effective_timeouts(root: Path, services: tuple[str, ...], hub_timeout: str) -> dict[str, str]:
-    """The `http.default_timeout` each service ends up with: its override, else the hub value."""
+def effective_timeouts(root: Path, services: tuple[str, ...], hub_timeout: str) -> dict[str, float | None]:
+    """The timeout in seconds each service ends up with: the real call's for the two Python services, else its override or the hub value.
+
+    None means the value could not be read (for example a call timeout that does not resolve).
+    """
     overrides = service_overrides(root, services)
-    return {service: str(overrides.get(service, {}).get("http.default_timeout", hub_timeout)) for service in services}
+    setting = {service: overrides.get(service, {}).get("http.default_timeout", hub_timeout) for service in services}
+    found: dict[str, float | None] = {service: parse_duration(value) for service, value in setting.items()}
+    for site in (BOOKINGS_CALL, NOTIFICATIONS_CALL):
+        try:
+            found[site.service] = effective_timeout(root, site, lambda service=site.service: parse_duration(setting[service])).seconds
+        except (OutsideContract, Unresolved, ValueError, OSError):
+            found[site.service] = None
+    return found

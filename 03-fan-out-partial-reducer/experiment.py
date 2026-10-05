@@ -4,8 +4,10 @@ Automated arms (default n=10), who owns the merge when workers collide on platfo
   first-wins         the first worker commit to touch a key wins, later changes are dropped
   supervisor-merges  Opus writes the merged value for each conflict
   hub-owner          workers send change requests, Opus applies them to platform.yaml
-  overrides-allowed  baseline: workers may write their own service overrides, hub conflicts first-wins
-The first three and the human arm forbid worker overrides (the harness strips them); only the merge owner may grant one.
+  overrides-allowed  baseline 1: workers may write their own service overrides and code literals, hub conflicts first-wins
+  code-local         baseline 2: no overrides, but timeouts as code literals are allowed, hub conflicts first-wins
+The first three and the human arm are platform-mandated: no worker overrides (the harness strips them), the timeout in
+code must be http_timeout(...) (a file that breaks it is reverted), and only the merge owner may grant an override.
 Human arm (`--human`, n=3 by default, `--human-n 5` for five; needs you at the terminal): you decide each conflict, timed.
 Half the runs per automated arm (rounded toward failed) lose one worker, rotating; the human arm loses the middle run
 of 3 (runs 2 and 4 of 5). Benchmark runs are refused while PREDICTIONS.md still says DRAFT.
@@ -127,11 +129,11 @@ def summarise(path: Path) -> str:
             f"| {mean(row['wall_seconds'] - row['human_seconds'] for row in runs):.0f} |"
         )
     present = [arm for arm, runs in by_arm.items() if runs]
-    lines += ["", "Service overrides (who wrote them, and how far the platform forked):", "", "| arm | worker override edits stripped, mean | worker override edits written, mean | granted by the merge owner, mean | services with an override in the merged repo, mean | distinct effective timeouts across the 8 services, mean |", "|---|---|---|---|---|---|"]
+    lines += ["", "Service overrides (who wrote them, and how far the platform forked):", "", "| arm | mandate rejections (file edits reverted), mean | worker override edits stripped, mean | worker override edits written, mean | granted by the merge owner, mean | services with an override in the merged repo, mean | distinct effective timeouts across the 8 services, mean |", "|---|---|---|---|---|---|---|"]
     for arm in present:
         runs = by_arm[arm]
         lines.append(
-            f"| {arm} | {mean(row['override_edits_stripped'] for row in runs):.1f} | {mean(row['override_edits_written'] for row in runs):.1f} "
+            f"| {arm} | {mean(row['mandate_rejections'] for row in runs):.1f} | {mean(row['override_edits_stripped'] for row in runs):.1f} | {mean(row['override_edits_written'] for row in runs):.1f} "
             f"| {mean(len(row['overrides_granted']) for row in runs):.1f} | {mean(len(row['overrides_in_merged']) for row in runs):.1f} "
             f"| {mean(row['distinct_timeouts'] for row in runs):.1f} |"
         )

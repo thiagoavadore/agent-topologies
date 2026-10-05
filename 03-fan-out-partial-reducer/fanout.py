@@ -17,8 +17,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from fanout_arms import HubChange, Spend, first_wins, group_by_key, hub_owner_decide, human_pick, options_of, supervisor_pick
-from fanout_config import ARMS, OVERRIDES_ALLOWED_ARM, REDUCER_MODEL, WORKER_MODEL, WORKERS
+from fanout_config import ARMS, FIRST_WINS_ARMS, MANDATED_ARMS, OVERRIDES_ALLOWED_ARM, REDUCER_MODEL, WORKER_MODEL, WORKERS
 from fanout_hubfile import parse_hub, set_hub_values
+from fanout_mandate import mandate_violation
 from fanout_overrides import effective_timeouts, grant_override, override_edits, service_overrides, strip_overrides
 from fanout_prompts import REPORT_SYSTEM, report_prompt, service_paths, worker_prompt, worker_schema, worker_system
 from fanout_repo import ScratchRepo
@@ -43,6 +44,7 @@ class WorkerRun:
     hub_changes: list[dict] = field(default_factory=list)
     notes: str = ""
     override_edits: list[dict] = field(default_factory=list)  # {service, key, value}: overrides the worker wrote
+    mandate_rejections: list[dict] = field(default_factory=list)  # {path, reason}: file edits reverted for breaking the mandate
     overrides_stripped: bool = False  # True when the arm forbids worker overrides and the harness removed them
     error: str = ""
     commit_order: int | None = None
@@ -97,6 +99,12 @@ def run_worker(
             run.override_edits += [{"service": path.split("/")[0], **edit} for edit in edits]
             if edits and run.overrides_stripped:
                 run.files[path] = strip_overrides(base_files[path], run.files[path])
+        if arm in MANDATED_ARMS:
+            for path in list(run.files):
+                reason = mandate_violation(path, run.files[path])
+                if reason:
+                    run.mandate_rejections.append({"path": path, "reason": reason})
+                    del run.files[path]
         run.files = {path: text for path, text in run.files.items() if text != base_files[path]}
         run.hub_changes = [{**item, "value": str(item["value"]).strip()} for item in payload["hub_changes"]]
         run.notes = payload.get("notes", "")
@@ -230,7 +238,7 @@ def run_fanout(
             for index, (key, items) in enumerate(contested.items(), start=1):
                 options = options_by_key[key]
                 record = {"key": key, "base_value": base_hub[key], "options": options, "contested": True}
-                if arm in ("first-wins", OVERRIDES_ALLOWED_ARM):
+                if arm in FIRST_WINS_ARMS:
                     pick = first_wins(items)
                 elif arm == "supervisor-merges":
                     pick = supervisor_pick(backend, reducer_model, hub_text, key, base_hub[key], options, items, reducer)
@@ -284,6 +292,8 @@ def run_fanout(
         "merged_diff": merged_diff,
         "overrides_granted": grants,
         "override_edits_by_worker": {run.worker: len(run.override_edits) for run in runs},
+        "mandate_rejections_by_worker": {run.worker: len(run.mandate_rejections) for run in runs},
+        "mandate_rejections": sum(len(run.mandate_rejections) for run in runs),
         "override_edits_stripped": sum(len(run.override_edits) for run in runs if run.overrides_stripped),
         "override_edits_written": sum(len(run.override_edits) for run in runs if not run.overrides_stripped),
         "overrides_in_merged": overrides_in_merged,

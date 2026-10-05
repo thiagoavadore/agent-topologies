@@ -20,7 +20,7 @@ def test_failure_schedule_rounds_toward_failed_and_rotates_workers():
 
 def test_arm_order_rotates_per_run():
     arms = list(AUTOMATED_ARMS)
-    assert [experiment.rotated(arms, i)[0] for i in range(5)] == [arms[0], arms[1], arms[2], arms[3], arms[0]]
+    assert [experiment.rotated(arms, i)[0] for i in range(6)] == [*arms, arms[0]]
     assert sorted(experiment.rotated(arms, 1)) == sorted(arms)
 
 
