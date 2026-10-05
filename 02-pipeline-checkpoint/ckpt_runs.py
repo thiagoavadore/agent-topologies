@@ -99,8 +99,8 @@ def summarise(path: Path) -> str:
         return f"No runs at {path}."
     rows = load_rows(path)
     lines = [
-        "| arm | model, backend | runs (faulted / clean) | fault outcomes | tokens, mean (min to max) | gate share of tokens | false rejections (clean runs) | recall, mean (runs that reached stage 4) | wall s, mean |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| arm | model, backend | runs (faulted / clean) | fault outcomes | tokens, mean (min to max) | gate share of tokens | false rejections (clean runs) | recall, mean (runs that reached stage 4) | recall, mean (clean runs that reached stage 4) | wall s, mean |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for arm in ARMS:
         runs = [row for row in rows if row["arm"] == arm]
@@ -116,12 +116,15 @@ def summarise(path: Path) -> str:
         gate_share = sum(row["gate_tokens"] for row in runs) / sum(tokens) if sum(tokens) else 0
         scored = [row["score"]["recall"] for row in runs if row["score"]]
         recall_text = f"{statistics.mean(scored):.2f} ({len(scored)} of {len(runs)} runs)" if scored else f"n/a (0 of {len(runs)} runs)"
+        clean_scored = [row["score"]["recall"] for row in clean if row["score"]]
+        clean_recall_text = f"{statistics.mean(clean_scored):.2f} ({len(clean_scored)} of {len(clean)} runs)" if clean_scored else f"n/a (0 of {len(clean)} runs)"
         lines.append(
             f"| {arm} | {runs[0]['model']}, {runs[0]['backend']} | {len(runs)} ({len(faulted)} / {len(clean)}) | {outcome_text} "
             f"| {statistics.mean(tokens):,.0f} ({min(tokens):,} to {max(tokens):,}) "
             f"| {gate_share:.0%} "
             f"| {sum(row['false_rejection'] for row in clean)} of {len(clean)} "
             f"| {recall_text} "
+            f"| {clean_recall_text} "
             f"| {statistics.mean(row['wall_seconds'] for row in runs):.0f} |"
         )
     lines += ["", "Per injected fault (blamed stage is the stage whose checkpoint failed; the owner is always stage 1):", "", "| run | arm | fault | outcome | blamed stage | stopped by |", "|---|---|---|---|---|---|"]
