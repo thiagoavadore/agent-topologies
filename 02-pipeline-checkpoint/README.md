@@ -6,7 +6,11 @@ In a pipeline, each agent only sees what the one before it handed over. When sta
 
 ## The short answer
 
-TODO: written from `results/summary.md` after the benchmark run.
+A checkpoint only at the end never fired. By stage 4 the plan was consistent with its faulted input, so the last gate saw nothing wrong. Checking at every handoff caught 4 of 5 injected faults at stage 1, the stage that owns them.
+
+The cost is real. `every-handoff` stopped 3 of 5 clean runs (2 wrongly, 1 rightly) and used about 46% more tokens than no checks. Gates were 53% of its tokens.
+
+Two more things worth knowing. A fault that moves a fact to the wrong service was absorbed downstream in 3 of 3 runs in `none` and `end-only`, because the fact kept its file path. A dropped fact reached production in 2 of 2 runs there. `every-handoff` let one dropped fact through: the admin console's public exposure.
 
 ## The experiment
 
@@ -50,6 +54,8 @@ What changed:
 - Each gate now gets the judged stage's own contract: the stage's output schema, the category list (stages 2 to 4), and what the stage may drop by design (stage 2: facts that fit no category; stages 3 and 4: nothing). All four gates use the same wording pattern, in `gate_system()`.
 - Rejections are split without a model. A rejection is **justified** when the judged stage's output lacks a catalogue risk whose fact is in its input (for stage 1, the files hold every risk), and **false** otherwise. On a faulted run, a rejection whose lost risks include the injected target counts as the injected fault. The summary reports `false rejections` and `justified rejections` for clean runs, and the justified / false split for other rejections on faulted runs.
 
+The two benchmarks did not catch the same four faults. In the first, `every-handoff` caught runs 1, 3, 5 and 9 at stage 1 and stopped run 7 at stage 2. In the second it caught runs 1, 5, 7 and 9 at stage 1 and let run 3 through. Four of five both times, but a different four, which says how noisy a gate is at five faults.
+
 The first runs are kept in [`results/2026-10-05-v1-gate-contract-mismatch.jsonl`](results/2026-10-05-v1-gate-contract-mismatch.jsonl) (summary beside it). The lesson, same as in folder 01: whoever writes the checker decides the result, and that includes the gate.
 
 ## Run it
@@ -68,13 +74,50 @@ uv run python experiment.py --summarise-only                   # rebuild results
 
 ## Results
 
-TODO: table from `results/summary.md`.
+Run on 5 Oct 2026 (the second run, see the section above). Tokens count everything sent and received across the whole pipeline. Ten runs per arm: 5 faulted, 5 clean.
+
+| Arm | Tokens per run (average) | vs `none` | Gate share of tokens | Injected faults (5) | Clean runs stopped (of 5) | Recall, all runs that reached stage 4 | Recall, clean runs that reached stage 4 |
+|---|---|---|---|---|---|---|---|
+| `none` | 28,975 | n/a | 0% | absorbed 3, reached production 2 | 0 | 0.93 (10 of 10 runs) | 0.96 (5 of 5 runs) |
+| `end-only` | 33,876 | +17% | 15% | absorbed 3, reached production 2 | 0 | 0.95 (10 of 10 runs) | 0.96 (5 of 5 runs) |
+| `every-handoff` | 42,308 | +46% | 53% | caught at stage 1: 4, reached production 1 | 3 (2 false, 1 justified) | 0.97 (3 of 10 runs) | 1.00 (2 of 5 runs) |
+
+What this tells us:
+
+- **A late checkpoint is too late.** `end-only` caught 0 of 5 faults. Its gate saw a plan that was consistent with the faulted facts and passed it, so it never blamed any stage.
+- **The stage-1 gate is where the catches happen.** It sees the files next to the facts, the only place a moved or dropped fact is visible. The four stops name the right misattributed or missing fact (per-fault rows in [`results/summary.md`](results/summary.md)).
+- **A moved fact hides behind its file path.** When a fact lands on the wrong service but keeps its file path, the later stages still tie it to the right file. That absorbed 3 of 3 such faults in `none` and `end-only`. A dropped fact has nothing left to tie to, and reached production in 2 of 2 runs in those arms.
+- **Checking has a price on clean runs.** `every-handoff` stopped 3 of 5 clean runs. Run 6 (stage 2) and run 10 (stage 1) were false stops. Run 2 (stage 2) was justified: stage 2 had lost a catalogue risk it was given. A false stop is a run someone has to look at for nothing.
+- **Recall: use the clean-run column.** It reads 0.96, 0.96 and 1.00, so gates add no findings. The all-runs figure for `every-handoff` (0.97) is inflated by selection: 7 of its 10 runs were stopped before stage 4 and are not scored, so it rests on 3 runs. Do not read it as a gain.
+
+Raw data: [`results/summary.md`](results/summary.md) for the full table and the per-fault rows, [`results/runs.jsonl`](results/runs.jsonl) for every run (each stage's output, each gate's verdict and reason).
+
+## Predictions
+
+Written before any run and frozen on 5 Oct 2026 in [`PREDICTIONS.md`](../PREDICTIONS.md). Results that disagree are reported as misses.
+
+| Prediction | Result |
+|---|---|
+| `none`: almost all injected faults reach production | **Miss.** Nothing caught any fault, but only 2 of 5 reached production. The 3 wrong-service faults were absorbed. |
+| `end-only`: most faults reach production | **Miss**, same split: 2 of 5 reached production, 3 absorbed. |
+| `every-handoff`: fewest faults reach production | **Hit.** 1 of 5. |
+| `end-only` blames stage 4 for the faults it catches | **Miss.** It caught none, so it blamed no stage. |
+| `every-handoff` blames mostly stage 1 | **Hit.** All 4 catches were at stage 1. |
+| Tokens: `none` lowest, `end-only` slightly above | **Hit.** 28,975 and 33,876 (+17%). |
+| Tokens: `every-handoff` highest, gates a third to a half | **Hit on highest** (42,308). Gates were 53%, just over the range. |
+| False rejections on clean runs: `none` zero, `end-only` low, `every-handoff` highest | **Hit.** 0, 0 and 2 of 5. |
+| Recall on clean runs about equal across arms | **Hit.** 0.96, 0.96, 1.00. |
+| Recall on all runs: `none` lowest, `end-only` about equal to it, `every-handoff` highest by selection | **Hit.** 0.93, 0.95, 0.97 (3 of 10 runs). |
+
+The surprise we named was `every-handoff` failing to beat `end-only` on faults reaching production. It did beat it: 1 against 2.
 
 ## Limits
 
-- One task, ten runs per arm, one fault site (stage 1), two fault types. Not a general claim about pipelines.
+- One task, ten runs per arm (5 faulted, 5 clean), one fault site (stage 1), two fault types. Not a general claim about pipelines.
+- Five faults per arm: one fault changing outcome moves a percentage by 20 points.
+- The gate wording was fixed after the first benchmark exposed the problem (see above), so the false-rejection figures here are not pre-registered. The second run is the one quoted.
 - Claude models only (Sonnet 5.5 in every role, gates included), and token counts include Claude Code's per-call overhead.
-- The harness injects the faults; real stage-1 errors look different.
+- The faults are injected by us; real stage-1 errors look different.
 - The traps were designed by the authors; pre-registering the predictions makes that visible, it does not remove it.
 - The gate sees one stage's input and output. After stage 1 it never sees the files, so `end-only` is judged on what a late gate can know, not on what a better-informed one could.
 - A catch is credited to the stage whose checkpoint failed, which for `end-only` is stage 4 even though the fault started at stage 1. That is the finding, not a bug.

@@ -7,8 +7,8 @@ It's the companion code for the series "Agent topologies are org charts" in [The
 | Folder | The setup | The question it tests | Newsletter issue |
 |---|---|---|---|
 | [`01-orchestrator-worker`](01-orchestrator-worker/) | A lead agent splits the job and hands pieces to workers | Does the lead earn its keep, and what happens when it's out? | 13 |
-| `02-pipeline-checkpoint` | Agents work in sequence, with a check between steps | When step 3 fails, whose problem is it? | 14 (planned) |
-| `03-fan-out-partial-reducer` | Many agents work in parallel, one merges their results | Who is responsible for the merge? | 14 (planned) |
+| [`02-pipeline-checkpoint`](02-pipeline-checkpoint/) | Agents work in sequence, with a check between steps | When step 3 fails, whose problem is it? | 14 |
+| [`03-fan-out-partial-reducer`](03-fan-out-partial-reducer/) | Many agents work in parallel, one merges their results | Who is responsible for the merge? | 14 |
 | `04-hierarchical` | Leads managing other leads | Should the agent layers match the team layers? | 15 (planned) |
 | `05-event-bus` | Agents react to messages on a shared channel | Who looks after the shared channel? | 15 (planned) |
 | `06-critic-refiner` | One agent writes, another critiques, against a fixed test | Who owns the test, and can the writer game it? | 16 (planned) |
