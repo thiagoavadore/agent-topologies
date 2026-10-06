@@ -92,7 +92,7 @@ Written before any run and frozen on 5 Oct 2026 in [`PREDICTIONS.md`](../PREDICT
 |---|---|
 | Hub conflicts: `overrides-allowed` about zero | **Hit.** 0 contested keys. |
 | Hub conflicts: `code-local` low, rate limit only | **Hit.** 0.2 contested keys: rate limit in 2 of 10 runs, timeout in 0. |
-| Hub conflicts: mandated `first-wins` 1 to 2, timeout in most runs | **Hit on the pattern.** Timeout in 6 of 10, rate limit in 3 of 10. The mean is 0.9, just under the range, because 2 runs had none. |
+| Hub conflicts: mandated `first-wins` 1 to 2, timeout in most runs | **Miss on the number, hit on the pattern.** The mean is 0.9, below the predicted 1 to 2, because 2 runs had no conflict. The timeout was the main conflict as predicted (6 of 10 runs; rate limit 3 of 10). |
 | Hub conflicts: `supervisor-merges` and `human-decides` like `first-wins`; `hub-owner` zero textual | **Hit.** 1.0 and 1.3 contested keys; `hub-owner` 0.0 textual, 1.0 contested. |
 | Distinct timeouts: `overrides-allowed` 3 or more, `code-local` 2 or more | **Hit.** 3.0 and 2.9. |
 | Distinct timeouts: `first-wins` 1 to 2, `supervisor-merges` 2 | **Hit.** 1.4 and 2.0. |
