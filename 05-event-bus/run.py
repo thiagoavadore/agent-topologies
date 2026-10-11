@@ -50,7 +50,15 @@ def describe(row: dict) -> str:
     for name in ("investigator", "investigator_no_trace"):
         if row[name]:
             item = row[name]["score"]
-            lines.append(f"{name}: correct {item['correct']} of {item['channel_losses']} channel losses, false assurance {item['false_assurance_channel']}, missing {len(item['missing_risks'])}, error: {row[name]['error'] or 'none'}")
+            if item is None:
+                lines.append(f"{name}: not scored, error: {row[name]['error']}")
+                continue
+            lines.append(
+                f"{name}: first problem {item['first_problem_correct']} of {item['first_problem_scored']} {item['first_problem_by_kind']}, "
+                f"false alarms {item['clean_total'] - item['clean_correct']} of {item['clean_total']}; "
+                f"cause {item['correct']} of {item['channel_losses']} channel losses, false assurance {item['false_assurance_channel']}, "
+                f"missing {len(item['missing_risks'])}, error: {row[name]['error'] or 'none'}"
+            )
     lines.append(f"tokens {row['total_tokens']} {row['tokens_by_role']}; consumer calls {row['consumer_calls']}; wall {row['wall_seconds']}s")
     lines.append(f"served: consumers {row['consumer_served_models']}, owner roles {row['owner_served_primary']}")
     return "\n".join(lines)

@@ -109,7 +109,7 @@ def table(header: list[str], rows: list[list]) -> list[str]:
 def arm_table(by_arm: dict[str, list[dict]]) -> list[str]:
     header = [
         "arm", "n", f"risks fixed of {len(RISKS)}, mean (min)", "clean fix rate", "fleet-telemetry fixed (of 2n)", "outside contract, mean",
-        "regressions, mean", "tokens, mean (consumers / owner / investigator)", "consumer calls, mean", "owner prompt chars, mean", "wall s, mean",
+        "regressions, mean", "operating tokens, mean (consumers / owner); investigator apart", "consumer calls, mean", "owner prompt chars, mean", "wall s, mean",
     ]
     rows = []
     for arm, runs in by_arm.items():
@@ -120,7 +120,7 @@ def arm_table(by_arm: dict[str, list[dict]]) -> list[str]:
             f"{sum(row['clean_fixed'] for row in runs)} of {sum(row['clean_total'] for row in runs)}",
             f"{sum(row['fleet_fixed'] for row in runs)} of {2 * len(runs)}",
             f"{mean(row['score']['outside_contract'] for row in runs):.1f}", f"{mean(row['score']['regressions'] for row in runs):.1f}",
-            f"{mean(row['total_tokens'] for row in runs):,.0f} ({mean(r['consumers'] for r in roles):,.0f} / {mean(r['owner'] for r in roles):,.0f} / {mean(r['investigator'] for r in roles):,.0f})",
+            f"{mean(row['operating_tokens'] for row in runs):,.0f} ({mean(r['consumers'] for r in roles):,.0f} / {mean(r['owner'] for r in roles):,.0f}); {mean(r['investigator'] for r in roles):,.0f}",
             f"{mean(row['consumer_calls'] for row in runs):.1f}", f"{mean(row['owner']['prompt_chars'] for row in runs):,.0f}",
             f"{mean(row['wall_seconds'] for row in runs):.0f}",
         ])
@@ -147,14 +147,46 @@ def fault_tables(by_arm: dict[str, list[dict]]) -> list[str]:
          "wrong team declined", "wrong team edited its own files"], rows)
 
 
+KINDS = ("malformed", "wrong-service", "consumer-crash", "duplicate", "unowned")
+
+
+def investigator_variants(arm: str) -> list[tuple[str, str]]:
+    variants = [("with trace context" if arm == "platform-owned" else "records as kept", "investigator")]
+    if arm == "platform-owned":
+        variants.append(("trace context stripped", "investigator_no_trace"))
+    return variants
+
+
+def scored(runs: list[dict], key: str) -> list[dict]:
+    """Scores of the runs whose investigator call produced a usable answer; failed calls are excluded, not scored as wrong."""
+    return [row[key]["score"] for row in runs if row.get(key) and row[key]["score"]]
+
+
 def traceability_table(by_arm: dict[str, list[dict]]) -> list[str]:
     rows = []
     for arm, runs in by_arm.items():
-        variants = [("with trace context" if arm == "platform-owned" else "records as kept", "investigator")]
-        if arm == "platform-owned":
-            variants.append(("trace context stripped", "investigator_no_trace"))
-        for label, key in variants:
-            scores = [row[key]["score"] for row in runs if row.get(key)]
+        for label, key in investigator_variants(arm):
+            scores = scored(runs, key)
+            if not scores:
+                continue
+            total = sum(item["first_problem_scored"] for item in scores)
+            by_kind = [
+                f"{sum(item['first_problem_by_kind'].get(kind, [0, 0])[0] for item in scores)} of {sum(item['first_problem_by_kind'].get(kind, [0, 0])[1] for item in scores)}"
+                for kind in KINDS
+            ]
+            clean_total = sum(item["clean_total"] for item in scores)
+            rows.append([
+                arm, label, len(scores), f"{sum(item['first_problem_correct'] for item in scores)} of {total}", *by_kind,
+                f"{clean_total - sum(item['clean_correct'] for item in scores)} of {clean_total}",
+            ])
+    return table(["arm", "records", "runs scored", "first problem correct", *KINDS, "false alarms on clean risks"], rows)
+
+
+def loss_table(by_arm: dict[str, list[dict]]) -> list[str]:
+    rows = []
+    for arm, runs in by_arm.items():
+        for label, key in investigator_variants(arm):
+            scores = scored(runs, key)
             if not scores:
                 continue
             losses = sum(item["channel_losses"] for item in scores)
@@ -164,8 +196,20 @@ def traceability_table(by_arm: dict[str, list[dict]]) -> list[str]:
                 f"{sum(item['false_assurance_fix'] for item in scores)} of {sum(item['fix_did_not_hold'] for item in scores)}",
                 sum(len(item["missing_risks"]) for item in scores),
             ])
-    return table(["arm", "records", "runs", "channel-caused losses", "cause correct", "false assurance (channel loss reported handled)",
+    return table(["arm", "records", "runs scored", "channel-caused losses left", "cause correct", "false assurance (channel loss reported handled)",
                   "false assurance (fix did not hold reported handled)", "risks left out"], rows)
+
+
+def failure_table(by_arm: dict[str, list[dict]]) -> list[str]:
+    rows = []
+    for arm, runs in by_arm.items():
+        rows.append([
+            arm, len(runs), sum(1 for row in runs if row["owner"]["error"]),
+            sum(1 for row in runs if row["investigator"]["error"]), sum(1 for row in runs if (row.get("investigator_no_trace") or {}).get("error")),
+            sum(1 for row in runs for item in row["deliveries"] if item["outcome"] in ("error", "invalid")),
+        ])
+    return table(["arm", "runs", "owner call failed (no actions taken)", "investigator failed (run excluded from accuracy)",
+                  "stripped-trace investigator failed (excluded)", "consumer deliveries with an error or invalid reply"], rows)
 
 
 def per_run_table(rows: list[dict], arms: list[str]) -> list[str]:
@@ -186,6 +230,11 @@ def summarise(path: Path) -> str:
     if not path.exists():
         return f"No runs at {path}."
     rows = load_rows(path)
+    commits = {row.get("code_commit", "") for row in rows}
+    if len(commits) > 1:
+        raise ValueError(f"{path.name} mixes code commits {sorted(commits)}; re-run the benchmark on one commit")
+    if any(commit.endswith("-dirty") or not commit for commit in commits):
+        raise ValueError(f"{path.name} was run on uncommitted or unknown code ({sorted(commits)}); commit first, then run the benchmark")
     setups = {setup_of(row) for row in rows}
     if len(setups) > 1:
         raise ValueError(f"{path.name} mixes models or backends ({len(setups)} setups); summarise one setup per file")
@@ -197,8 +246,12 @@ def summarise(path: Path) -> str:
         *arm_table(by_arm),
         "", "Loss faults (recovered: target fixed and its own message processed fixed; absorbed: fixed through another message; lost):", "",
         *fault_tables(by_arm),
-        "", "Traceability (investigator scored against the harness's ground truth):", "",
+        "", "Traceability, headline: did the investigator name the first problem of each of the 6 risks that had one (4 faults, 2 unowned), recovered or not?", "",
         *traceability_table(by_arm),
+        "", "Traceability, secondary: cause of the channel-caused losses still unfixed at the end, and false assurance:", "",
+        *loss_table(by_arm),
+        "", "Failures (not hidden in the other tables):", "",
+        *failure_table(by_arm),
         "", "Per run (fault outcomes malformed / wrong-service / consumer-crash as rec, abs or los, then risks fixed):", "",
         *per_run_table(rows, list(by_arm)),
         f"\nConsumers {consumer_model} (served: {', '.join(consumer_served) or 'not reported'}), owner roles {owner_model} "

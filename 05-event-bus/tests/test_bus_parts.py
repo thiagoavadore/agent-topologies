@@ -140,8 +140,8 @@ def test_actions():
         assert bus.assignments == {"fleet-telemetry": "Team Fleet"} and fleet
 
 
-def delivery(message_id, risk_id, outcome, *, duplicate=False):
-    return Delivery(message_id, risk_id, "Team X", risk_id.split(".")[0], 1, 1, duplicate, outcome=outcome)
+def delivery(message_id, risk_id, outcome, *, duplicate=False, complete=True):
+    return Delivery(message_id, risk_id, "Team X", risk_id.split(".")[0], 1, 1, duplicate, outcome=outcome, complete=complete)
 
 
 FAULTS = {"malformed": ROUTABLE[0], "wrong-service": ROUTABLE[2], "consumer-crash": ROUTABLE[4], "duplicate": ROUTABLE[6]}
@@ -214,3 +214,56 @@ def test_no_owner_records_are_the_team_logs():
     text = records_for_investigator("no-owner", bus)
     assert text.count("Local log of ") == 6 and "(nothing received)" in text
     assert bus.store == []
+
+
+def test_a_guessed_fix_on_an_incomplete_message_is_not_a_processed_fix():
+    """A consumer that claims "fixed" on a malformed or misrouted message must not turn a channel loss into a non-channel one."""
+    guessed = delivery("m1", FAULTS["malformed"], "fixed", complete=False)
+    truth = truth_for([], [guessed])
+    assert truth[FAULTS["malformed"]]["cause"] == "missing_fields" and truth[FAULTS["malformed"]]["channel_caused"]
+    assert not truth[FAULTS["malformed"]]["processed_fixed"]
+    sibling_fixed = truth_for([risk.id for risk in RISKS], [guessed])
+    assert fault_outcomes(sibling_fixed, FAULTS)["malformed"] == "absorbed"
+    bogus = truth_for([], [delivery("m2", FAULTS["wrong-service"], "fixed", complete=False)])
+    assert bogus[FAULTS["wrong-service"]]["cause"] == "wrong_team"
+
+
+def test_a_repaired_fault_that_the_right_team_declines_is_consumer_declined_but_keeps_its_first_problem():
+    repaired = truth_for([], [delivery("m1", FAULTS["wrong-service"], "not_mine", complete=False), delivery("m1", FAULTS["wrong-service"], "cannot_fix")])
+    assert repaired[FAULTS["wrong-service"]]["cause"] == "consumer_declined" and not repaired[FAULTS["wrong-service"]]["channel_caused"]
+    assert repaired[FAULTS["wrong-service"]]["first_problem"] == "wrong_team"
+    retried = truth_for([], [delivery("m2", FAULTS["consumer-crash"], "cannot_fix")])
+    assert retried[FAULTS["consumer-crash"]]["cause"] == "consumer_declined"
+    held = truth_for([], [delivery("m3", FAULTS["malformed"], "fixed")])
+    assert held[FAULTS["malformed"]]["cause"] == "fix_did_not_hold"
+
+
+def test_first_problem_truth_is_six_scored_risks_whatever_happened_next():
+    truth = truth_for([risk.id for risk in RISKS], [])
+    scored = {risk_id: item["first_problem"] for risk_id, item in truth.items() if item["problem_kind"]}
+    assert scored == {
+        FAULTS["malformed"]: "missing_fields", FAULTS["wrong-service"]: "wrong_team", FAULTS["consumer-crash"]: "consumer_failed",
+        FAULTS["duplicate"]: "delivered_twice", "fleet-telemetry.single_point_of_failure": "no_subscriber", "fleet-telemetry.no_owner": "no_subscriber",
+    }
+    clean = [item["first_problem"] for item in truth.values() if not item["problem_kind"]]
+    assert len(clean) == 5 and set(clean) == {"none"}
+    declined_first = truth_for([], [delivery("m4", ROUTABLE[1], "not_mine"), delivery("m4", ROUTABLE[1], "fixed")])
+    assert declined_first[ROUTABLE[1]]["first_problem"] == "consumer_declined"
+
+
+def answer_with(truth, **overrides):
+    risks = []
+    for risk_id, item in truth.items():
+        entry = {"risk_id": risk_id, "status": "lost", "cause": item["cause"], "first_problem": item["first_problem"]}
+        risks.append({**entry, **overrides.get(risk_id, {})})
+    return {"risks": risks}
+
+
+def test_first_problem_scoring_by_kind_and_false_alarms():
+    truth = truth_for([risk.id for risk in RISKS], [])
+    perfect = score_investigator(answer_with(truth), truth)
+    assert (perfect["first_problem_correct"], perfect["first_problem_scored"], perfect["clean_correct"], perfect["clean_total"]) == (6, 6, 5, 5)
+    assert perfect["first_problem_by_kind"] == {"malformed": [1, 1], "wrong-service": [1, 1], "consumer-crash": [1, 1], "duplicate": [1, 1], "unowned": [2, 2]}
+    flat = score_investigator(answer_with(truth, **{FAULTS["duplicate"]: {"first_problem": "none"}, ROUTABLE[1]: {"first_problem": "wrong_team"}}), truth)
+    assert flat["first_problem_correct"] == 5 and flat["first_problem_by_kind"]["duplicate"] == [0, 1] and flat["clean_correct"] == 4
+    assert score_investigator(None, truth)["first_problem_correct"] == 0

@@ -11,6 +11,7 @@ from topologies.harbour import RISKS, SERVICES, world_files, worker_contract
 REFERENCE_FILES = ("platform.yaml", "teams.yaml", "libs/platform_config.py")
 RISK_IDS = [risk.id for risk in RISKS]
 CAUSES = ["no_subscriber", "missing_fields", "wrong_team", "consumer_failed", "consumer_declined", "unknown"]
+FIRST_PROBLEMS = ["none", "no_subscriber", "missing_fields", "wrong_team", "consumer_failed", "delivered_twice", "consumer_declined"]
 
 ONE_LINE = {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\n]+$"}
 
@@ -32,8 +33,12 @@ PLATFORM_VIEW = (
 STEWARD_SYSTEM = OWNER_SYSTEM.replace("{view}", STEWARD_VIEW).replace("{schema}", ACTIONS_EXAMPLE)
 PLATFORM_AGENT_SYSTEM = OWNER_SYSTEM.replace("{view}", PLATFORM_VIEW).replace("{schema}", ACTIONS_EXAMPLE)
 
-INVESTIGATOR_SYSTEM = """A scanner published one message per operational risk on a shared channel. Below are the records this platform kept about what happened next. For each risk, say whether it was handled (a team reported a fix) or lost, and if lost, where: no_subscriber (no team owns the service), missing_fields (the message lacked the fields needed to act), wrong_team (it reached a team that does not own the risk), consumer_failed (a consumer took it and never reported), consumer_declined (the right team declined it), unknown. Cite the message ids your answer rests on. Use only the records.
-Reply with JSON only, matching: {"risks": [{"risk_id": "<id>", "status": "handled|lost", "cause": "none|no_subscriber|missing_fields|wrong_team|consumer_failed|consumer_declined|unknown", "evidence": ["<message id>"]}]}"""
+INVESTIGATOR_SYSTEM = """A scanner published one message per operational risk on a shared channel. Below are the records this platform kept about what happened next. For each risk, give three things.
+status: handled (a team reported a fix) or lost.
+cause: if lost, where it was lost: no_subscriber (no team owns the service), missing_fields (the message lacked the fields needed to act), wrong_team (it reached a team that does not own the risk), consumer_failed (a consumer took it and never reported), consumer_declined (the right team declined it), unknown. If handled, none.
+first_problem: the first thing that went wrong with this risk's message, even if it was put right later: none, no_subscriber, missing_fields, wrong_team, consumer_failed, delivered_twice (a consumer was handed the same message twice), consumer_declined (the right team received a complete message and declined it).
+Cite the message ids your answer rests on. Use only the records.
+Reply with JSON only, matching: {"risks": [{"risk_id": "<id>", "status": "handled|lost", "cause": "none|no_subscriber|missing_fields|wrong_team|consumer_failed|consumer_declined|unknown", "first_problem": "none|no_subscriber|missing_fields|wrong_team|consumer_failed|delivered_twice|consumer_declined", "evidence": ["<message id>"]}]}"""
 
 
 def consumer_system(team: str, services: list[str]) -> str:
@@ -115,11 +120,12 @@ INVESTIGATOR_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["risk_id", "status", "cause"],
+                "required": ["risk_id", "status", "cause", "first_problem"],
                 "properties": {
                     "risk_id": {"enum": RISK_IDS},
                     "status": {"enum": ["handled", "lost"]},
                     "cause": {"enum": ["none", *CAUSES]},
+                    "first_problem": {"enum": FIRST_PROBLEMS},
                     "evidence": {"type": "array", "items": {"type": "string"}},
                 },
             },

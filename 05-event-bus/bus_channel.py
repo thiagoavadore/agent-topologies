@@ -41,6 +41,7 @@ class Job:
     message: Message
     attempt: int = 1
     duplicate: bool = False  # the transport delivered it again
+    corrective: bool = False  # an owner's redelivery, route or republish: the Idempotent Receiver only suppresses transport duplicates
 
 
 class Bus:
@@ -72,7 +73,7 @@ class Bus:
     def services_of(self, team: str) -> list[str]:
         return sorted({*self.subscriptions[team], *(service for service, owner in self.assignments.items() if owner == team)})
 
-    def publish(self, message: Message) -> str:
+    def publish(self, message: Message, *, corrective: bool = False) -> str:
         """Put `message` on the channel and say where it went."""
         with self.lock:
             self.messages.setdefault(message.message_id, message)
@@ -91,7 +92,7 @@ class Bus:
                     return "dead-letter:no-subscriber"
                 self.record("discarded", message, reason="no subscriber for the service")
                 return "discarded:no-subscriber"
-            self.enqueue(team, message)
+            self.enqueue(team, message, corrective=corrective)
             return f"queued:{team}"
 
     def schema_problem(self, message: Message) -> str:
@@ -101,9 +102,9 @@ class Bus:
             return problem.message[:200]
         return ""
 
-    def enqueue(self, team: str, message: Message, *, attempt: int = 1, duplicate: bool = False) -> None:
+    def enqueue(self, team: str, message: Message, *, attempt: int = 1, duplicate: bool = False, corrective: bool = False) -> None:
         with self.lock:
-            self.queues[team].append(Job(message, attempt, duplicate))
+            self.queues[team].append(Job(message, attempt, duplicate, corrective))
 
     def next_job(self, team: str) -> Job | None:
         with self.lock:

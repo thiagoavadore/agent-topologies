@@ -50,10 +50,13 @@ Per run that is 2 unroutable messages (fleet-telemetry), 3 loss faults, 1 duplic
 
 The harness labels every risk: fixed at the end (checker), processed (some delivery of a message for it got the outcome `fixed`), and for an unfixed risk a cause: `no_subscriber`, `missing_fields`, `wrong_team`, `consumer_failed` (these four are channel-caused), `consumer_declined`, `fix_did_not_hold` (a consumer said fixed, the checker disagrees) or `unknown`.
 
-The investigator gets the scanner's ledger (message id, risk, the service the scanner meant), the subscription table and the arm's records. For each of the 11 risks it says `handled` or `lost` and, if lost, the cause, citing message ids. It is a measured subject, scored against the harness's ground truth, never a judge:
+The investigator gets the scanner's ledger (message id, risk, the service the scanner meant), the subscription table and the arm's records. For each of the 11 risks it says `status` (`handled` or `lost`), `cause` (where a lost risk was lost) and `first_problem` (the first thing that went wrong with the message, even if it was put right later), citing message ids. It is a measured subject, scored against the harness's ground truth, never a judge:
 
-- **attribution accuracy**: correct cause over channel-caused losses; a risk left out counts as wrong.
-- **false assurance**: a channel-caused loss reported as handled. Reported separately for `fix_did_not_hold`, which no channel can see.
+- **first-problem accuracy (headline)**: on the six risks that had a problem at the start (the malformed, wrong-service, consumer-crash and duplicate targets, and the two unowned fleet-telemetry risks), did it name `missing_fields`, `wrong_team`, `consumer_failed`, `delivered_twice` or `no_subscriber`? Every arm gets six scored items per run whether or not the owner repaired the fault, so the measure does not vanish when an arm fixes everything. False alarms (a problem named on the five clean risks) are reported too.
+- **cause accuracy (secondary)**: correct cause over the channel-caused losses still unfixed at the end; a risk left out counts as wrong. Few arms have many of these.
+- **false assurance (secondary)**: a channel-caused loss reported as handled. Reported separately for `fix_did_not_hold`, which no channel can see.
+
+A run whose investigator call failed, or whose answer repeats a risk, is counted in a failures table and excluded from these rates, never scored as wrong. Owner call failures and consumer error or invalid replies are counted there too.
 
 In `platform-owned` a second, paired call gets the same records with Correlation Identifiers and Message History removed and corrective copies relabelled with fresh ids. It is reported apart and is not part of the arm's token total.
 
@@ -81,9 +84,9 @@ TBD: the frozen predictions go in [`PREDICTIONS.md`](../PREDICTIONS.md) before a
 - Four faults per run is a stress density chosen to get ten faults per kind per arm in one evening. The faults sit on distinct messages so they do not compound by design.
 - Consumers are told to fix only the reported risk. Opportunistic fixes are counted as `absorbed`.
 - No-owner teams keep local logs, so the investigator is not blind there; it lacks a shared store.
-- Choices made while building the harness: the Idempotent Receiver keys on team and message id, so a corrective copy sent to a different team is not suppressed; files in a consumer reply are written whatever its `outcome` says, so a bogus edit by a wrong team is measured; the ledger shows the service the scanner meant, not the faulted one; the owners' action logs name the message they acted on but never the id of the copy; after `assign_owner` the receiving team's prompt lists the new service among those it owns.
+- Choices made while building the harness: the Idempotent Receiver keys on team and message id and suppresses transport duplicates only, so an owner's redelivery, route or republished copy is always delivered; a transport duplicate is not queued when the first processing failed, because the platform redelivers that itself; a message counts as processed only when it was complete (all fields, the risk's own service, the owning team), so a consumer's guessed "fixed" on a malformed or misrouted message does not; files in a consumer reply are written whatever its `outcome` says, so a bogus edit by a wrong team is measured; the ledger shows the service the scanner meant, not the faulted one; the owners' action logs name the message they acted on but never the id of the copy; after `assign_owner` the receiving team's prompt lists the new service among those it owns.
 - Dry runs before the benchmark are disclosed in `PREDICTIONS.md`.
-- Token counts include Claude Code's fixed prompt per call (see the [root README](../README.md#setup)); they are counts, not cost.
+- Token counts include Claude Code's fixed prompt per call (see the [root README](../README.md#setup)); they are counts, not cost. The headline token column is operating tokens (consumers plus owner); the investigator is reported apart because its prompt grows with the records the arm keeps.
 - Comparisons hold inside this folder only, never against 01 to 04.
 
 ## Run it yourself
@@ -98,7 +101,7 @@ uv run 05-event-bus/experiment.py --parallel-arms
 uv run 05-event-bus/experiment.py --summarise-only                                  # rewrite results/summary.md
 ```
 
-`experiment.py` refuses to run while the draft predictions say DRAFT or `PREDICTIONS.md` has no `## 05-event-bus:` section; `run.py` is always allowed and refuses to write `results/runs.jsonl`. Keep one setup per `runs.jsonl`: the summary refuses a file that mixes models, served models or backends.
+`experiment.py` refuses to run while the draft predictions say DRAFT or `PREDICTIONS.md` has no `## 05-event-bus:` section; `run.py` is always allowed and refuses to write `results/runs.jsonl`. Keep one setup per `runs.jsonl`: the summary refuses a file that mixes models, served models or backends. Every row records the git commit it ran on, with `-dirty` appended when this folder (results aside), `src` or `fixtures` had uncommitted changes; the summary refuses dirty, unknown or mixed commits, so commit before the benchmark.
 
 ## What's in the code
 

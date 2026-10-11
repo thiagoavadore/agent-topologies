@@ -3,13 +3,13 @@ import subprocess
 import sys
 
 import pytest
-from bus_helpers import FOLDER, Script, smart_actions
+from bus_helpers import FOLDER, Script, consumer_fix, literal_investigator, smart_actions
 
 import experiment
 import run as run_module
 from bus import run_row
 from bus_config import ARMS
-from bus_faults import faults_for_run
+from bus_faults import faults_for_run, scanner_messages
 from topologies.model import ScriptedBackend
 
 
@@ -142,8 +142,41 @@ def test_unusable_owner_reply_is_recorded_and_the_run_goes_on(tmp_path):
     assert row["score"]["risks_fixed"] == 6 + 1  # the platform retries the crash target in code
 
 
-def write(path, rows):
-    path.write_text("".join(json.dumps(item) + "\n" for item in rows))
+def write(path, rows, *, stamp=True):
+    """Write rows as a benchmark file; `stamp` gives them one clean commit, as a committed benchmark run would have."""
+    path.write_text("".join(json.dumps({**item, "code_commit": "abc123"} if stamp else item) + "\n" for item in rows))
+
+
+def test_code_commit_marks_uncommitted_code_in_the_folder_but_not_results(tmp_path, monkeypatch):
+    import bus
+
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        out = "deadbeef\n" if command[1] == "rev-parse" else dirty
+        return type("Done", (), {"returncode": 0, "stdout": out})()
+
+    monkeypatch.setattr(bus.subprocess, "run", fake_run)
+    dirty = ""
+    assert bus.code_commit() == "deadbeef"
+    dirty = " M 05-event-bus/bus.py\n"
+    assert bus.code_commit() == "deadbeef-dirty"
+    status = next(command for command in calls if command[1] == "status")
+    assert "05-event-bus" in status and "src" in status and "fixtures" in status and ":(exclude)05-event-bus/results" in status
+
+
+def test_summary_refuses_dirty_unknown_or_mixed_commits(tmp_path, three_rows):
+    path = tmp_path / "commits.jsonl"
+    write(path, [{**three_rows[0], "code_commit": "abc-dirty"}], stamp=False)
+    with pytest.raises(ValueError, match="uncommitted"):
+        experiment.summarise(path)
+    write(path, [{**three_rows[0], "code_commit": ""}], stamp=False)
+    with pytest.raises(ValueError, match="uncommitted or unknown"):
+        experiment.summarise(path)
+    write(path, [{**three_rows[0], "code_commit": "aaa"}, {**three_rows[1], "code_commit": "bbb"}], stamp=False)
+    with pytest.raises(ValueError, match="mixes code commits"):
+        experiment.summarise(path)
 
 
 @pytest.fixture(scope="module")
@@ -203,3 +236,123 @@ def test_run_refuses_benchmark_file():
     with pytest.raises(SystemExit, match="never writes"):
         sys.argv = ["run.py", "--out", str(run_module.BENCHMARK_FILE)]
         run_module.main()
+
+
+CLEAN = "customer-profiles.missing_backup"
+
+
+def decline_clean_once():
+    seen = {"n": 0}
+
+    def consumer(repo, message, owned):
+        if message.get("service") == "customer-profiles" and message.get("category") == "missing_backup" and seen["n"] == 0:
+            seen["n"] += 1
+            return {"outcome": "cannot_fix", "files": [], "reason": "flaky decline"}
+        return consumer_fix(repo, message, owned)
+
+    return consumer
+
+
+def test_owner_redelivery_and_republish_are_not_swallowed_by_the_idempotent_receiver(tmp_path):
+    message_id = next(item["message_id"] for item in scanner_messages(0)[0] if item["risk_id"] == CLEAN)
+    actions = lambda entries: [
+        {"action": "redeliver", "message_id": message_id, "reason": "try again"},
+        {"action": "return_to_producer", "message_id": message_id, "reason": "try again"},
+    ]
+    for arm in ("steward-agent", "platform-owned"):
+        row, _ = row_for(arm, tmp_path, owner=actions, consumer=decline_clean_once())
+        pass_two = [item for item in row["deliveries"] if item["risk_id"] == CLEAN and item["pass_no"] == 2]
+        assert len(pass_two) == 2 and "skipped-duplicate" not in {item["outcome"] for item in pass_two}, arm
+        assert row["truth"][CLEAN]["fixed"] and row["truth"][CLEAN]["cause"] == "none", arm
+        assert [item["result"] for item in row["owner"]["action_log"]] == ["queued:Team Identity"] * 2
+
+
+def test_platform_does_not_hand_the_transport_duplicate_on_when_the_first_processing_failed(tmp_path):
+    dup_message = next(item["message_id"] for item in scanner_messages(0)[0] if item["risk_id"] == faults_for_run(0)["duplicate"])
+
+    class JunkOnFirstDelivery(Script):
+        junk_left = 2  # both backend attempts of the first delivery
+
+        def __call__(self, system, prompt):
+            if self.role_of(system) == "consumer" and f'"message_id": "{dup_message}"' in prompt and self.junk_left:
+                self.junk_left -= 1
+                return "junk, not json"
+            return super().__call__(system, prompt)
+
+    work = tmp_path / "junky"
+    script = JunkOnFirstDelivery(work / "repo")
+    row = run_row(run=1, run_index=0, backend_name="scripted", arm="platform-owned", backend=ScriptedBackend(script), consumer_model="c", owner_model="o", workdir=work)
+    mine = [(item["attempt"], item["duplicate"], item["outcome"]) for item in row["deliveries"] if item["message_id"] == dup_message]
+    assert mine == [(1, False, "invalid"), (2, False, "fixed"), (1, True, "skipped-duplicate")]
+
+
+def test_operating_tokens_leave_out_the_investigator(tmp_path):
+    row, _ = row_for("steward-agent", tmp_path, owner=smart_actions)
+    roles = row["tokens_by_role"]
+    assert row["operating_tokens"] == roles["consumers"] + roles["owner"] and row["total_tokens"] == row["operating_tokens"] + roles["investigator"]
+
+
+def test_a_guessing_consumer_does_not_hide_a_channel_loss_in_a_run(tmp_path):
+    faults = faults_for_run(0)
+    assert faults["malformed"] == "bookings-api.missing_timeout"
+
+    def guesser(repo, message, owned):
+        if "category" not in message:
+            sibling = {**message, "category": "no_rate_limit", "file": "bookings-api/service.yaml", "locator": "x"}
+            return {**consumer_fix(repo, sibling, owned), "outcome": "fixed", "reason": "guessed"}
+        return consumer_fix(repo, message, owned)
+
+    row, _ = row_for("no-owner", tmp_path, consumer=guesser)
+    truth = row["truth"][faults["malformed"]]
+    assert not truth["fixed"] and truth["cause"] == "missing_fields" and truth["channel_caused"]
+    assert row["fault_outcomes"]["malformed"] == "lost"
+    assert row["investigator"]["score"]["channel_losses"] == 5
+
+
+def test_first_problem_is_scored_in_every_arm_even_when_everything_is_repaired(tmp_path):
+    for arm in ARMS:
+        row, _ = row_for(arm, tmp_path, owner=smart_actions)
+        score = row["investigator"]["score"]
+        assert score["first_problem_scored"] == 6 and score["clean_total"] == 5, arm
+        if arm != "no-owner":
+            assert score["first_problem_correct"] == 6 and score["clean_correct"] == 5, (arm, score)
+    platform, _ = row_for("platform-owned", tmp_path, owner=smart_actions, run=2)
+    assert platform["investigator_no_trace"]["score"]["first_problem_scored"] == 6
+
+
+def bad_investigator(kind):
+    def investigate(prompt):
+        if kind == "junk":
+            return "not json"
+        risks = literal_investigator(prompt)["risks"]
+        return {"risks": [*risks[:-1], risks[0]]}  # repeats one risk and leaves another out
+
+    return investigate
+
+
+def test_failed_calls_are_counted_and_excluded_not_scored_as_wrong(tmp_path):
+    for kind in ("junk", "repeat"):
+        work = tmp_path / kind
+        script = Script(work / "repo", owner=smart_actions)
+        plain = script.__call__
+
+        def backend(system, prompt, kind=kind, plain=plain):
+            if Script.role_of(system) == "investigator":
+                return json.dumps(bad_investigator(kind)(prompt)) if kind == "repeat" else "not json"
+            if Script.role_of(system) == "platform-agent" and kind == "junk":
+                raise RuntimeError("backend down")
+            return plain(system, prompt)
+
+        row = run_row(run=1, run_index=0, backend_name="scripted", arm="platform-owned", backend=ScriptedBackend(backend), consumer_model="c", owner_model="o", workdir=work)
+        assert row["investigator"]["answer"] is None and row["investigator"]["error"] and row["investigator"]["score"] is None
+        assert row["investigator_no_trace"]["score"] is None
+        if kind == "junk":
+            assert row["owner"]["called"] and "backend down" in row["owner"]["error"] and row["owner"]["actions"] == []
+        good, _ = row_for("platform-owned", tmp_path, owner=smart_actions, run=3 if kind == "junk" else 4)
+        path = tmp_path / f"{kind}.jsonl"
+        write(path, [row, good])
+        text = experiment.summarise(path)
+        assert "| platform-owned | 2 | " in text
+        failures = text.split("Failures (not hidden in the other tables):")[1]
+        assert ("| platform-owned | 2 | 1 | 1 | 1 | 0 |" if kind == "junk" else "| platform-owned | 2 | 0 | 1 | 1 | 0 |") in failures
+        assert "| platform-owned | trace context stripped | 1 |" in text  # only the good run is scored

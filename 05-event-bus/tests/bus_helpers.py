@@ -78,6 +78,24 @@ def smart_actions(entries: list[dict]) -> list[dict]:
     return actions
 
 
+def literal_first_problem(item: dict, mine: list[dict], subscriptions: str) -> str:
+    """The first problem a record shows outright: a body that is short or names another service, silence, a repeat."""
+    receipts = [record for record in mine if record.get("event") in ("received", "delivered")]
+    bodies = [record["body"] for record in mine if "body" in record]
+    if item["service"] in subscriptions.splitlines()[-1]:
+        return "no_subscriber"
+    if any("file" not in body for body in bodies) or any(record.get("event") == "invalid" for record in mine):
+        return "missing_fields"
+    if any(body["service"] != item["service"] for body in bodies):
+        return "wrong_team"
+    outcomes = [record for record in mine if record.get("outcome")]
+    if any(record.get("event") == "no_reply" for record in mine) or (receipts and "received" in {r["event"] for r in receipts} and len(outcomes) < len(receipts)):
+        return "consumer_failed"
+    if len([r for r in receipts if not r.get("history")]) >= 2 or any("acknowledged" in record.get("reason", "") for record in mine):
+        return "delivered_twice"
+    return "none"
+
+
 def literal_investigator(prompt: str) -> dict:
     """An investigator that trusts only what a record says outright; it cannot tell why a local log shows a decline."""
     blocks = prompt.split("\n\n")
@@ -102,7 +120,7 @@ def literal_investigator(prompt: str) -> dict:
             status, cause = "lost", "consumer_failed"
         else:
             status, cause = "lost", "unknown"
-        risks.append({"risk_id": item["risk_id"], "status": status, "cause": cause, "evidence": [item["message_id"]]})
+        risks.append({"risk_id": item["risk_id"], "status": status, "cause": cause, "first_problem": literal_first_problem(item, mine, blocks[1]), "evidence": [item["message_id"]]})
     return {"risks": risks}
 
 

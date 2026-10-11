@@ -30,6 +30,7 @@ from topologies.harbour import FIXTURE, RISKS_BY_ID, SERVICES
 from topologies.model import Backend
 
 CALLED = ("fixed", "not_mine", "cannot_fix", "invalid", "error")
+FAILED = ("injected-failure", "invalid", "error")
 DECLINED = ("not_mine", "cannot_fix")
 CLEAN_TOTAL = 5
 
@@ -43,6 +44,7 @@ class Delivery:
     pass_no: int
     attempt: int
     duplicate: bool  # the transport delivered the message again
+    complete: bool = False  # the body has every field, names the risk's own service, and went to the team that owns or was assigned it
     injected_failure: bool = False
     outcome: str = ""  # fixed, not_mine, cannot_fix, invalid, error, injected-failure or skipped-duplicate
     reason: str = ""
@@ -136,11 +138,18 @@ def consume(state: Pass, team: str, message: Message, delivery: Delivery) -> Non
     delivery.wall_seconds = round(time.monotonic() - started, 1)
 
 
+def is_complete(bus: Bus, team: str, message: Message, risk_id: str) -> bool:
+    risk = RISKS_BY_ID.get(risk_id)
+    body = message.body
+    return bool(risk and all(key in body for key in ("category", "file", "locator")) and body.get("service") == risk.service and bus.route(risk.service) == team)
+
+
 def handle(state: Pass, team: str, job: Job, pass_no: int) -> Delivery:
     """Deliver one job to a team under the arm's delivery rules."""
     bus, message = state.bus, job.message
     delivery = Delivery(message.message_id, bus.risk_of.get(message.message_id, ""), team, message.body.get("service", ""), pass_no, job.attempt, job.duplicate)
-    if bus.policy.idempotent_receiver and bus.is_acked(team, message.message_id):
+    delivery.complete = is_complete(bus, team, message, delivery.risk_id)
+    if bus.policy.idempotent_receiver and not job.corrective and bus.is_acked(team, message.message_id):
         delivery.outcome, delivery.reason = "skipped-duplicate", "this team already acknowledged the message id"
         bus.record("discarded", message, team=team, reason=delivery.reason)
         return delivery
@@ -150,7 +159,7 @@ def handle(state: Pass, team: str, job: Job, pass_no: int) -> Delivery:
         delivery.injected_failure, delivery.outcome, delivery.reason = True, "injected-failure", "the harness crashed the consumer before it replied"
     else:
         consume(state, team, message, delivery)
-    if delivery.outcome in ("injected-failure", "invalid", "error"):
+    if delivery.outcome in FAILED:
         bus.record("no_reply", message, team=team, reason=delivery.reason)
         if bus.policy.acks and job.attempt == 1:
             bus.enqueue(team, bus.copy_for_retry(message, "retry"), attempt=2)
@@ -163,7 +172,8 @@ def handle(state: Pass, team: str, job: Job, pass_no: int) -> Delivery:
             bus.ack(team, message.message_id)
         if bus.policy.dead_letter and delivery.outcome in DECLINED:
             bus.dead_letter(message, f"{team} replied {delivery.outcome}: {delivery.reason}"[:200])
-    if state.take_duplicate(job):
+    # A platform that did not ack the first processing redelivers it itself, so the transport duplicate is not queued on top.
+    if (delivery.outcome not in FAILED or not bus.policy.acks) and state.take_duplicate(job):
         bus.enqueue(team, message, duplicate=True)
     return delivery
 
@@ -197,9 +207,17 @@ def score_record(result: CheckResult) -> dict:
 
 
 def code_commit() -> str:
+    """HEAD, with `-dirty` appended when this folder (results aside), `src` or `fixtures` differ from it."""
+    here = Path(__file__).parent
     try:
-        done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent, capture_output=True, text=True)
-        return done.stdout.strip() if done.returncode == 0 else ""
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=here, capture_output=True, text=True)
+        if head.returncode != 0:
+            return ""
+        changed = subprocess.run(
+            ["git", "status", "--porcelain", "--", "05-event-bus", "src", "fixtures", ":(exclude)05-event-bus/results"],
+            cwd=here.parent, capture_output=True, text=True,
+        )
+        return head.stdout.strip() + ("-dirty" if changed.stdout.strip() else "")
     except OSError:
         return ""
 
@@ -218,9 +236,12 @@ def investigate(backend: Backend, model: str, published: list[dict], records: st
         spend.add(outcome.tokens, outcome.served_models)
         if isinstance(outcome, InvalidAfterRetry):
             error = outcome.error
+        elif len({item["risk_id"] for item in outcome.payload["risks"]}) != len(outcome.payload["risks"]):
+            error = "the answer repeats a risk_id, so it leaves another risk out"
         else:
             answer = outcome.payload
-    return {"answer": answer, "error": error, "tokens": tokens, "score": score_investigator(answer, truth), "records": records}
+    # A failed call is not scored: it would read as a low accuracy instead of a failure.
+    return {"answer": answer, "error": error, "tokens": tokens, "score": score_investigator(answer, truth) if answer else None, "records": records}
 
 
 def duplicate_record(deliveries: list[Delivery], message_id: str, fixed_at_end: bool) -> dict:
@@ -327,6 +348,7 @@ def run_bus(
             "consumers": consumer_tokens, "owner": owner.tokens, "investigator": investigator["tokens"],
             "investigator_no_trace": investigator_no_trace["tokens"] if investigator_no_trace else 0,
         },
+        "operating_tokens": consumer_tokens + owner.tokens,
         "total_tokens": consumer_tokens + owner.tokens + investigator["tokens"],
         "consumer_calls": sum(1 for item in deliveries if item.outcome in CALLED),
         "consumer_served_models": sorted(state.spend.served),

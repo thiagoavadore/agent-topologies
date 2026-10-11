@@ -74,7 +74,7 @@ def run_action(action: dict, bus: Bus, visible_ids: set[str]) -> str:
         risk_id = bus.risk_of.get(message_id)
         if not risk_id:
             return "ignored: the producer has no risk for this message"
-        return bus.publish(bus.copy_for_retry(original, kind, body=valid_copy(risk_id)))
+        return bus.publish(bus.copy_for_retry(original, kind, body=valid_copy(risk_id)), corrective=True)
     service = action.get("service", "") if kind == "route" else original.body.get("service", "")
     if service not in SERVICES:
         return "ignored: route needs a known service"
@@ -82,7 +82,7 @@ def run_action(action: dict, bus: Bus, visible_ids: set[str]) -> str:
     if team is None:
         return f"ignored: no team owns {service}"
     body = {**original.body, "service": service}
-    bus.enqueue(team, bus.copy_for_retry(original, f"route:{service}" if kind == "route" else kind, body=body))
+    bus.enqueue(team, bus.copy_for_retry(original, f"route:{service}" if kind == "route" else kind, body=body), corrective=True)
     return f"queued:{team}"
 
 
@@ -94,5 +94,5 @@ def assign_owner(service: str, team: str, bus: Bus) -> str:
     bus.assignments[service] = team
     pending = [bus.messages[message_id] for message_id in bus.undelivered if bus.messages[message_id].body.get("service") == service]
     for message in pending:
-        bus.enqueue(team, bus.copy_for_retry(message, "assign_owner"))
+        bus.enqueue(team, bus.copy_for_retry(message, "assign_owner"), corrective=True)
     return f"assigned {team}; queued {len(pending)} message(s)"
