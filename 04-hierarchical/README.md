@@ -6,7 +6,11 @@ Should the agent layers match the team layers? Put middle managers between the w
 
 ## The short answer
 
-TODO: fill after the benchmark (`results/runs.jsonl`). One paragraph per finding, each with the number from this folder's own runs.
+The cut did not matter on this task, and the layers added cost, not safety. Nothing regressed in any arm (0 of 10 runs in each of the four) and all 11 risks were fixed in all 40 arm-runs. The platform lead owns the shared file, so it saw every change whatever the tree above it looked like, and it kept the hub timeout at 300 ms in 39 of 40 arm-runs.
+
+The lead caught every harmful timeout request. For pricing-engine the ladder says `caught-at-top` in 10 of 10 runs in every arm. The sub-leads absorbed essentially nothing: the only threat stopped below the top was one rate-limit request against payments-gateway, in 1 run of each tiered arm. The management layer cost a lot for that: management tokens were 3,947 for `flat`, 23,018 for `by-team` (about 5.8x) and 17,681 for `by-runtime` (about 4.5x).
+
+Read this with the biggest limit in mind. `CONTRACT.md` rule 8 tells every lead that pricing-engine reads the hub timeout, so no tier was blind to the coupling. The trap was weaker than designed (in the dry runs it fired once in 3). The result is that a lead who knows the coupling exists will protect it whatever the cut, not that the cut can never matter. In the one run where the hub did go to 15s (`by-runtime-registry`, run 7), the platform lead granted pricing-engine its own 300 ms override in the same reply, and nothing regressed.
 
 ## The experiment
 
@@ -69,20 +73,63 @@ Predictions were written before the benchmark and frozen in [`PREDICTIONS.md`](.
 
 ## Results
 
-TODO: fill from `results/summary.md` after the benchmark. Per-arm table (risks fixed, runs with a regression and which need, escalations, harmful requests, overrides granted, distinct timeouts, tokens by tier, platform-lead prompt size), the coupling ladder per arm and need, and the per-run table of final hub values.
+Run on 11 Oct 2026, n=10 per arm, on freeze commit `0db1298` (all 40 rows recorded that commit, clean). Tokens count everything sent and received. Worker tokens are the same in all four rows of a run, so management tokens are the column to compare.
+
+| Arm | Risks fixed of 11 (mean) | Runs with a regression | Escalations (hub-changing) | Harmful requests up (inside / outside) | Overrides granted (mean) | Distinct effective timeouts | Management tokens (sub-leads / lead) | Lead prompt chars |
+|---|---|---|---|---|---|---|---|---|
+| `flat` | 11.0 | 0 of 10 | 3.2 (3.2) | 2.1 (0.0 / 2.1) | 2.8 | 3.0 | 3,947 (0 / 3,947) | 5,484 |
+| `by-team` | 11.0 | 0 of 10 | 3.0 (2.4) | 1.4 (0.4 / 1.0) | 2.8 | 3.0 | 23,018 (19,325 / 3,692) | 5,215 |
+| `by-runtime` | 11.0 | 0 of 10 | 2.3 (2.0) | 1.0 (0.0 / 1.0) | 3.0 | 2.2 | 17,681 (14,089 / 3,592) | 5,022 |
+| `by-runtime-registry` | 11.0 | 0 of 10 | 2.3 (2.0) | 1.0 (0.0 / 1.0) | 2.8 | 2.3 | 17,973 (14,089 / 3,884) | 5,768 |
+
+Coupling ladder, runs per outcome:
+
+| Arm | pricing-engine | payments-gateway |
+|---|---|---|
+| `flat` | 10 `caught-at-top` | 9 `not-threatened`, 1 `caught-at-top` |
+| `by-team` | 10 `caught-at-top` | 9 `not-threatened`, 1 `absorbed-at-sub-lead` |
+| `by-runtime` | 10 `caught-at-top` | 9 `not-threatened`, 1 `absorbed-at-sub-lead` |
+| `by-runtime-registry` | 10 `caught-at-top` | 9 `not-threatened`, 1 `absorbed-at-sub-lead` |
+
+Reliability: 0 platform-lead calls failed, 0 of 30 sub-lead calls in each tiered arm fell back to forwarding unchanged, 0 unreadable requests, 0 rows with a call error or a served-model mismatch.
+
+What this tells us:
+
+- **No cut regressed, so the cut did not separate the arms.** 0 of 10 everywhere and 11 of 11 fixed in every arm-run. There is nothing to rank on the safety columns.
+- **The owner of the shared file saw every change.** The lead held the hub timeout at 300 ms in 39 of 40 arm-runs and caught every harmful timeout request (pricing-engine `caught-at-top` 10 of 10 in every arm). Sub-leads did not need to stop the threat, because the lead stopped it.
+- **Sub-leads absorbed essentially nothing.** One payments-gateway threat was stopped below the top in each tiered arm, all in run 4. Everything else reached the lead.
+- **The layers cost, and bought nothing measurable.** Management tokens: 3,947 for `flat`, 23,018 for `by-team` (about 5.8x), 17,681 for `by-runtime` (about 4.5x), 17,973 for `by-runtime-registry`. Summed call seconds tell the same story: 11 for `flat`, 45 for `by-team`, 36 for `by-runtime`.
+- **The tiered lead was not overloaded.** Its prompt was about the same size as the flat lead's (5,022 to 5,768 characters against 5,484), so span of control did not show up here.
+- **The registry did not matter either.** The one run where the hub went to 15s was `by-runtime-registry` run 7. The lead accepted a 15s request and in the same reply granted pricing-engine a 300 ms override, so pricing-engine kept 0.3s and nothing regressed. The registry arm has the needs list, but so did the lead in `flat` and it behaved the same way: the other 39 arm-runs kept 300 ms.
+- **Fewer harmful requests reached the lead in the tiered arms.** Harmful requests reaching the lead: 2.1 for `flat`, 1.4 for `by-team` (0.4 inside the harmed subtree), 1.0 for `by-runtime`. Sub-leads merged or dropped some, and the lead still caught what remained.
 
 Raw data: [`results/summary.md`](results/summary.md) for the tables, [`results/runs.jsonl`](results/runs.jsonl) for every row (each tier's requests, the platform lead's decisions and the full score).
 
 ## Predictions
 
-TODO: score each prediction from [`PREDICTIONS.md`](../PREDICTIONS.md) as hit or miss, with the number. Dry runs are disclosed there.
+Written before any run and frozen on 11 Oct 2026 in [`PREDICTIONS.md`](../PREDICTIONS.md) (commit `0db1298`). Results that disagree are reported as misses. The dry runs are disclosed there.
 
 | Prediction | Result |
 |---|---|
-| TODO | TODO |
+| Runs with a regression: `flat` 0 to 1, `by-team` 0 to 2, `by-runtime-registry` 0 to 1 | **Hit.** 0 of 10 in each. |
+| Runs with a regression: `by-runtime` highest, 1 to 4 | **Miss.** 0 of 10. The prediction itself named this as the one most likely to miss: the platform lead held 300 ms on its own. |
+| pricing-engine regressed only where a regression happens; payments-gateway 0 in every arm | **Hit.** 0 of 10 for both needs in every arm. Final hub rates were 20/s, 30/s and 50/s, all inside the need. |
+| Coupling ladder for pricing-engine: mostly `caught-at-top` in every arm, `absorbed-at-sub-lead` rare in `by-team`, `reached-hub` only where a run regresses | **Hit.** `caught-at-top` 10 of 10 in all four arms, 0 `absorbed-at-sub-lead`, 0 `reached-hub`. |
+| Harmful requests up: `flat` about 2 all outside, `by-team` 1 to 2 mostly outside, `by-runtime` about 1 outside, registry same as `by-runtime` | **Hit.** 2.1 (0.0 / 2.1), 1.4 (0.4 / 1.0), 1.0 (0.0 / 1.0), 1.0 (0.0 / 1.0). |
+| Escalations: `flat` highest, about 3 to 4; `by-team` about 3, fewer hub-changing; `by-runtime` about 2 to 3; registry same | **Hit.** 3.2 (3.2), 3.0 (2.4), 2.3 (2.0), 2.3 (2.0). |
+| Risks fixed of 11: about equal, within a point | **Hit.** 11.0 in every arm, min 11. |
+| Management tokens: `flat` lowest (about 4k), `by-team` 5 to 6 times `flat`, registry slightly above `by-runtime` | **Hit.** 3,947; 23,018 (about 5.8x); 17,973 against 17,681. |
+| Management tokens: `by-runtime` about 3 to 4 times `flat` | **Miss.** About 4.5x (17,681). |
+| Platform-lead prompt chars: `flat` largest, about equal to registry; `by-team` and `by-runtime` smaller | **Mixed.** The registry arm is the largest (5,768), `flat` is second (5,484), `by-team` 5,215 and `by-runtime` 5,022 are smaller. The sizes are within about 15% of each other. |
+| Reliability: lead failures, sub-lead fallbacks and unreadable requests near zero | **Hit.** All zero. |
+
+Score: 8 hits, 2 misses, 1 mixed, over the 11 rows above.
+
+The surprises we named: `by-runtime` regressing no more than `by-team` happened (0 and 0), and so did the registry arm regressing as often as `by-runtime` (0 and 0), but both are the same finding: nothing regressed anywhere, so no comparison is possible. `absorbed-at-sub-lead` being common in `by-team` did not happen (0 of 10 for pricing-engine, 1 of 10 for payments-gateway). The honest reading of the "likeliest miss" is that rule 8 plus the lead's own caution protected pricing-engine whatever the cut, which is the limit below.
 
 ## Limits
 
+- **The trap was weaker than designed (read this first).** `CONTRACT.md` rule 8 goes to every lead and says pricing-engine reads the hub timeout, so no tier was blind to the coupling. In the dry runs the trap fired once in 3. In the benchmark it never fired (0 of 40 arm-runs regressed). This folder does not show that the cut cannot matter. It shows that when every lead is told what the shared file reaches, the owner of that file protects it whatever the tree. A task where the coupling is not written down in the contract is a different experiment.
 - One task, n=10 per arm. Comparisons hold inside this folder only, never against 01, 02 or 03.
 - Claude models only: Sonnet 5.5 workers, Opus 5.5 leads, one backend (`claude-cli`).
 - The harness applies the edits, so this measures where a coupling is resolved, not how well agents edit files. Workers reply once with full file contents and have no tools.

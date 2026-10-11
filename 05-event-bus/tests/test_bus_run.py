@@ -1,5 +1,4 @@
 import json
-import subprocess
 import sys
 
 import pytest
@@ -203,9 +202,10 @@ def test_experiment_refuses_while_unregistered(tmp_path, monkeypatch):
     experiment.refuse_unregistered()
 
 
-def test_experiment_script_refuses_the_real_draft():
-    done = subprocess.run([sys.executable, str(FOLDER / "experiment.py"), "--n", "1"], capture_output=True, text=True)
-    assert done.returncode != 0 and "Refusing to run" in (done.stderr + done.stdout)
+def test_the_guard_points_at_the_real_predictions():
+    # Never launch the real script here: once predictions are frozen it would start a live benchmark.
+    assert experiment.DRAFT_FILE.name == "predictions-draft.md" and experiment.DRAFT_FILE.exists()
+    assert experiment.PREDICTIONS.name == "PREDICTIONS.md"
 
 
 def test_arm_order_rotates_per_run():

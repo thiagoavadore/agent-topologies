@@ -6,7 +6,11 @@ Agents that talk only through a shared message channel need someone to look afte
 
 ## The short answer
 
-TBD after the benchmark.
+Someone has to look after the channel. With no owner, 4 or 5 of the 11 risks were lost in every run (6.7 of 11 fixed, minimum 6). The two unroutable fleet-telemetry risks were never fixed (0 of 20), every wrong-service message and every consumer crash was lost (10 of 10 each), and a malformed message was only fixed by accident: absorbed in 7 of 10 runs, lost in 3.
+
+An agent steward and a platform-owned channel fixed the same. Both fixed all 11 risks in all 10 runs (11.0 of 11), recovered every wrong-service and consumer-crash fault, and fixed fleet-telemetry 20 of 20. The platform did it cheaper and quieter: 55,700 operating tokens against 71,106 (about 22% fewer), 2,480 owner tokens against 8,249, an owner prompt of 1,683 characters against 7,336. The steward raised 3 false alarms in 50 clean risks, the platform 0.
+
+Two caveats on that comparison. The duplicate was processed twice in 0 of 10 runs under `platform-owned` and 10 of 10 under the other two, but that is by construction: the Idempotent Receiver is code. And the traceability question has no answer here: the investigator named the first problem in 60 of 60 cases in every arm, including `platform-owned` with the trace context stripped. That is the ceiling, and it is the result we predicted, so trace context showed no effect on this task.
 
 ## The experiment
 
@@ -66,11 +70,79 @@ Fixed and regressed come from the shared checker only ([`fixcheck.check()`](../s
 
 ## Results
 
-TBD after the benchmark. Source: `results/runs.jsonl` and `results/summary.md`.
+Run on 11 Oct 2026, n=10 per arm, on freeze commit `0db1298` (all 30 rows recorded that commit, clean). Tokens count everything sent and received. Operating tokens are consumers plus owner; the investigator is reported apart.
+
+| Arm | Risks fixed of 11 (mean, min) | Clean risks fixed | fleet-telemetry fixed (of 20) | Operating tokens (consumers / owner) | Investigator tokens | Consumer calls | Owner prompt chars | Wall seconds |
+|---|---|---|---|---|---|---|---|---|
+| `no-owner` | 6.7 (6) | 50 of 50 | 0 | 41,790 (41,790 / 0) | 4,336 | 9.0 | 0 | 34 |
+| `steward-agent` | 11.0 (11) | 50 of 50 | 20 | 71,106 (62,858 / 8,249) | 6,961 | 14.3 | 7,336 | 63 |
+| `platform-owned` | 11.0 (11) | 50 of 50 | 20 | 55,700 (53,220 / 2,480) | 7,029 | 12.0 | 1,683 | 57 |
+
+No arm had a regression. Loss faults, per arm and kind (recovered: the target was fixed through its own message; absorbed: fixed through another message; lost):
+
+| Arm | `malformed` | `wrong-service` | `consumer-crash` |
+|---|---|---|---|
+| `no-owner` | 0 recovered, 7 absorbed, 3 lost | 10 lost | 10 lost |
+| `steward-agent` | 5 recovered, 5 absorbed | 10 recovered | 10 recovered |
+| `platform-owned` | 10 recovered | 10 recovered | 10 recovered |
+
+Duplicate: processed twice in 10 of 10 runs for `no-owner` and `steward-agent`, 0 of 10 for `platform-owned`. The second processing rewrote files in 0 runs, so there was no harm anywhere. The wrong team declined the misrouted message in 10 of 10 runs in every arm and never edited its own files.
+
+Traceability, headline (first problem named, on the 6 risks per run that had one):
+
+| Arm | Records | First problem correct | False alarms on clean risks |
+|---|---|---|---|
+| `no-owner` | as kept | 60 of 60 | 0 of 50 |
+| `steward-agent` | as kept | 60 of 60 | 3 of 50 |
+| `platform-owned` | with trace context | 60 of 60 | 0 of 50 |
+| `platform-owned` | trace context stripped | 60 of 60 | 0 of 50 |
+
+Secondary: in `no-owner`, 43 channel-caused losses were left at the end, the investigator gave the right cause for 43 of 43 and reported none of them as handled. The other arms left no channel-caused loss, so those cells have nothing to score. Failures: 0 owner calls and 0 investigator calls failed in any arm; 1 consumer delivery in `no-owner` had an error or invalid reply, none elsewhere.
+
+What this tells us:
+
+- **No owner loses about 4 of 11 every run.** 6.7 of 11, lost per run 4 or 5. The clean risks were fixed 50 of 50 in every arm, so consumers are fine when the channel delivers.
+- **A consumer cannot fix what it is never given.** fleet-telemetry has no owner, so no team subscribes: 0 of 20 without an owner, 20 of 20 in both owned arms.
+- **Wrong-service and consumer-crash faults are lost without an owner, 10 of 10 each.** The wrong team declined every misrouted message and nobody sent it on.
+- **Malformed messages are fixed by luck.** 7 absorbed and 3 lost. A malformed message keeps its `service`, so the consumer sees the service's files and may fix the risk anyway, but not reliably.
+- **A steward agent matched the platform on recovery.** Both ended with 11.0 of 11 and recovered every loss fault, so reading the whole log and acting on it was a full substitute for the guarantees in this task.
+- **The platform was cheaper and quieter.** 55,700 operating tokens against 71,106 (about 22% fewer), 2,480 owner tokens against 8,249, 12.0 consumer calls against 14.3, an owner prompt of 1,683 characters against 7,336 (about 4.4x smaller). The steward raised 3 false alarms on clean risks in 50, the platform 0. The steward recovered 5 of 10 malformed faults and absorbed the other 5; the platform recovered all 10 by rejecting and returning them.
+- **The duplicate result is by construction.** The platform processed the duplicate twice 0 of 10 times because the Idempotent Receiver is code. The duplicate caused no harm in any arm, so the data does not show that the missing guarantee cost anything here.
+- **The investigator named the first problem every time, in every arm.** 60 of 60, including with the trace context stripped. One task with this few faults was too easy for this to separate anything. We cannot say whether Correlation Identifiers help on a harder trail.
+
+Raw data: [`results/summary.md`](results/summary.md) for the full tables, [`results/runs.jsonl`](results/runs.jsonl) for every run (records, deliveries, owner actions, ground truth and investigator answers).
 
 ## Predictions
 
-TBD: the frozen predictions go in [`PREDICTIONS.md`](../PREDICTIONS.md) before any benchmark run, and the hit or miss table goes here after it.
+Written before any run and frozen on 11 Oct 2026 in [`PREDICTIONS.md`](../PREDICTIONS.md) (commit `0db1298`). Results that disagree are reported as misses. The dry runs are disclosed there.
+
+| Prediction | Result |
+|---|---|
+| Risks fixed: `no-owner` lowest, about 6 to 8; `platform-owned` highest, about 10 to 11 | **Hit.** 6.7 (min 6) and 11.0. |
+| Risks fixed: `steward-agent` in the middle, about 9 to 10 | **Miss.** 11.0, equal to `platform-owned`. |
+| Clean fix rate about equal across arms, near 5 of 5 | **Hit.** 50 of 50 in every arm. |
+| fleet-telemetry: 0 of 20 without an owner, most in the owned arms | **Hit.** 0, 20 and 20 of 20. |
+| `malformed`, `no-owner`: never recovered, absorbed or lost, absorbed only where the target shares a service with a sibling (5 of 10 schedule slots) | **Mixed.** Never recovered, 7 absorbed and 3 lost. The absorbed runs include single-risk services (customer-profiles, admin-console, maintenance-scheduler), so the mechanism was wrong: a malformed message keeps its `service`, which is enough for a consumer to read the files. |
+| `malformed`, `steward-agent`: mostly absorbed or lost, recovered when the steward returns it | **Mixed.** 5 recovered, 5 absorbed, 0 lost. Not "mostly lost". |
+| `malformed`, `platform-owned`: recovered in most | **Hit.** 10 of 10. |
+| `wrong-service`: lost in most without an owner, recovered in most by the steward and the platform agent | **Hit.** 10 lost; 10 recovered; 10 recovered. |
+| `consumer-crash`: lost in most without an owner; recovered in nearly all by the platform | **Hit.** 10 lost; 10 recovered. |
+| `consumer-crash`, `steward-agent`: recovered in most, some lost | **Mixed.** 10 recovered, none lost. |
+| Duplicate processed twice: 10 of 10, 10 of 10, 0 of 10 (by construction) | **Hit.** Exactly that. |
+| Duplicate rewrites rare, harm near 0 | **Hit.** 0 rewrites, 0 harm. |
+| Wrong team declined in most runs in every arm | **Hit.** 10 of 10 in every arm, no bogus edits. |
+| Operating tokens: `no-owner` lowest, `platform-owned` middle at about 1.4 times `no-owner` | **Hit.** 41,790 and 55,700 (1.33x). |
+| Operating tokens: `steward-agent` highest, about 2 to 2.5 times `no-owner` (80k) | **Mixed.** Highest, but 71,106 is 1.7x, below the range. |
+| Consumer calls: about 9, 13 to 15, about 12 | **Hit.** 9.0, 14.3, 12.0. |
+| Owner prompt: steward several times `platform-owned` | **Hit.** 7,336 against 1,683 (about 4.4x). |
+| First problem correct at or near the ceiling in every arm, and the same with the trace context stripped | **Hit.** 60 of 60 in every row, including stripped. |
+| False alarms on clean risks low in every arm | **Hit.** 0, 3 and 0 of 50. |
+| Cause mostly correct, false assurance near zero (thin counts) | **Hit.** 43 of 43 and 0 of 43 in `no-owner`; no channel-caused losses left in the owned arms. |
+| Failures: owner and investigator failures near zero, a few invalid consumer replies in every arm | **Mixed.** Owner and investigator failures were 0. Invalid or errored consumer deliveries: 1 in `no-owner`, 0 in the others, not "in every arm". |
+
+Score: 15 hits, 1 miss, 5 mixed, over the 21 rows above.
+
+The surprises we named did not happen. There was no gap in first-problem traceability (60 of 60 everywhere). `steward-agent` matched `platform-owned` on lost faults (none) but not at no more operating tokens: it used about 28% more (71,106 against 55,700). `no-owner` consumers did not absorb most loss faults: 7 of 30 were absorbed, all of them malformed messages.
 
 ## Limits
 
@@ -87,6 +159,9 @@ TBD: the frozen predictions go in [`PREDICTIONS.md`](../PREDICTIONS.md) before a
 - Choices made while building the harness: the Idempotent Receiver keys on team and message id and suppresses transport duplicates only, so an owner's redelivery, route or republished copy is always delivered; a transport duplicate is not queued when the first processing failed, because the platform redelivers that itself; a message counts as processed only when it was complete (all fields, the risk's own service, the owning team), so a consumer's guessed "fixed" on a malformed or misrouted message does not; files in a consumer reply are written whatever its `outcome` says, so a bogus edit by a wrong team is measured; the ledger shows the service the scanner meant, not the faulted one; the owners' action logs name the message they acted on but never the id of the copy; after `assign_owner` the receiving team's prompt lists the new service among those it owns.
 - Dry runs before the benchmark are disclosed in `PREDICTIONS.md`.
 - Token counts include Claude Code's fixed prompt per call (see the [root README](../README.md#setup)); they are counts, not cost. The headline token column is operating tokens (consumers plus owner); the investigator is reported apart because its prompt grows with the records the arm keeps.
+- Traceability hit the ceiling (60 of 60 in every arm, stripped trace included). With this few faults and this easy a trail, the investigator cannot separate the arms, so the Correlation Identifier result is "no effect seen on this task", not "no effect".
+- `no-owner` shows 1.0 outside contract on average: that is fleet-telemetry's planted `no_owner` risk, which nobody fixes, labelled by the frozen checker as outside contract (the same label artifact as in folder 03). Risks-fixed counts are unaffected.
+- The steward and the platform agent end at the same 11.0 of 11, so the arms separate on cost and false alarms only, at n=10. The 22% token gap and the 3 false alarms in 50 are single-task numbers.
 - Comparisons hold inside this folder only, never against 01 to 04.
 
 ## Run it yourself
