@@ -1,8 +1,7 @@
-**DRAFT. Not frozen; Thiago signs off. The benchmarks refuse to run while this file says DRAFT.** Everything below this paragraph is byte-identical to `predictions-freeze-section.md`, the exact text to append to root `PREDICTIONS.md`. To freeze: fill the date, commit and approver in both files, delete this paragraph, append the freeze section to `PREDICTIONS.md`, commit.
 
 # Predictions for Issue 15 (folders 04 and 05)
 
-Frozen YYYY-MM-DD at commit _______, before any benchmark run. Results that disagree are reported as misses, not edited away. Approved by ______.
+Frozen 2026-10-11 at commit 4d4728a, before any benchmark run. Results that disagree are reported as misses, not edited away. Approved by Thiago on 2026-10-11.
 
 Scoring: the shared checker (`src/topologies/fixcheck.py`, 11 planted risks, 2 regression needs), unchanged since Issue 14, plus the folder metrics in each folder's `experiment.py` summary. Directions are relative to the other arms in the same folder. Never compare across folders, and never compare a 04 or 05 number with 03.
 
