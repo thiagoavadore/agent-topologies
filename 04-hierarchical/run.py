@@ -48,7 +48,9 @@ def describe(row: dict) -> str:
         f"fixed {score['risks_fixed']}/{score['risks_total']}, regressions {score['regressions']} {score['regressed']}, "
         f"outside contract {score['outside_contract']}; ladder {row['ladder']}"
     )
-    lines.append(f"tokens {row['total_tokens']} {row['tokens_by_tier']}; management wall {row['wall_seconds_management']}s; served workers {row['worker_served_primary']} leads {row['lead_served_primary']}")
+    lines.append(f"tokens {row['total_tokens']} {row['tokens_by_tier']}; management call seconds {row['management_call_seconds']}; served workers {row['worker_served_primary']} leads {row['lead_served_primary']}")
+    if row["call_errors"] or row["model_mismatches"] or row["unreadable_decisions"]:
+        lines.append(f"PROBLEMS call errors {row['call_errors']}; model mismatches {row['model_mismatches']}; unreadable decisions {row['unreadable_decisions']}")
     return "\n".join(lines)
 
 

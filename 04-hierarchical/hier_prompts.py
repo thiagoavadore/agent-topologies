@@ -11,16 +11,19 @@ from topologies.harbour import HUB_FILE, HUB_KEYS, NEEDS, SERVICES, world_files,
 # Read-only context every worker gets besides its own service.
 REFERENCE_FILES = (HUB_FILE, "teams.yaml", "libs/platform_config.py")
 
-ONE_LINE = {"type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\n]+$"}
+WORKER_REASON_MAX, LEAD_REASON_MAX, NOTES_MAX = 200, 400, 1200
+NOTES_ASKED = 1000  # the prompt asks for less than the schema allows
+ONE_LINE = {"type": "string", "minLength": 1, "maxLength": WORKER_REASON_MAX, "pattern": "^[^\\n]+$"}
+LEAD_REASON = {**ONE_LINE, "maxLength": LEAD_REASON_MAX}
 HUB_VALUE = {"anyOf": [ONE_LINE, {"type": "integer"}]}
 
 
-def hub_change_schema() -> dict:
+def hub_change_schema(reason: dict) -> dict:
     return {
         "type": "object",
         "additionalProperties": False,
         "required": ["key", "value", "reason"],
-        "properties": {"key": {"enum": list(HUB_KEYS)}, "value": HUB_VALUE, "reason": ONE_LINE},
+        "properties": {"key": {"enum": list(HUB_KEYS)}, "value": HUB_VALUE, "reason": reason},
     }
 
 
@@ -39,8 +42,8 @@ def worker_schema(paths: list[str]) -> dict:
                     "properties": {"path": {"enum": paths}, "content": {"type": "string", "minLength": 1}},
                 },
             },
-            "hub_changes": {"type": "array", "items": hub_change_schema()},
-            "notes": {"type": "string", "maxLength": 600},
+            "hub_changes": {"type": "array", "items": hub_change_schema(ONE_LINE)},
+            "notes": {"type": "string", "maxLength": NOTES_MAX},
         },
     }
 
@@ -49,14 +52,14 @@ SUB_LEAD_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["requests"],
-    "properties": {"requests": {"type": "array", "items": hub_change_schema()}},
+    "properties": {"requests": {"type": "array", "items": hub_change_schema(LEAD_REASON)}},
 }
 
 OVERRIDE_GRANT = {
     "type": "object",
     "additionalProperties": False,
     "required": ["service", "key", "value", "reason"],
-    "properties": {"service": {"enum": list(SERVICES)}, "key": {"enum": list(HTTP_KEYS)}, "value": ONE_LINE, "reason": ONE_LINE},
+    "properties": {"service": {"enum": list(SERVICES)}, "key": {"enum": list(HTTP_KEYS)}, "value": ONE_LINE, "reason": LEAD_REASON},
 }
 GRANTS = {"type": "array", "items": OVERRIDE_GRANT}
 
@@ -72,7 +75,7 @@ TOP_SCHEMA = {
                 "type": "object",
                 "additionalProperties": False,
                 "required": ["key", "value", "reason"],
-                "properties": {"key": {"enum": list(HUB_KEYS)}, "value": ONE_LINE, "reason": ONE_LINE},
+                "properties": {"key": {"enum": list(HUB_KEYS)}, "value": ONE_LINE, "reason": LEAD_REASON},
             },
         },
     },
@@ -87,7 +90,7 @@ Find every operational risk in your service (hardcoded secrets, outbound calls t
 Platform defaults live in platform.yaml and every service inherits them.
 You may edit your own service files and propose platform values through hub_changes. You may not write `overrides:` in any service.yaml: only the platform lead grants an override, and an override you write is removed.
 {mandate}
-You cannot edit platform.yaml. Your hub_changes are requests to your lead, who decides what to send to the platform lead.
+You cannot edit platform.yaml. Your hub_changes are requests to your lead, who decides what to send to the platform lead. Keep each reason to at most {reason_max} characters.
 The rules for changing the services (fixes are scored automatically by reading the files; a change outside these rules does not count):
 
 {contract}
@@ -95,7 +98,7 @@ The rules for changing the services (fixes are scored automatically by reading t
 Addendum to rule 2 for this task: do not write `overrides:`; the platform lead may grant one.
 
 Return the full new text of every file you change and leave unchanged files out. Reply with JSON only, no prose, matching:
-{{"files": [{{"path": "<file path as shown>", "content": "<full new file text>"}}], "hub_changes": [{{"key": "<hub key>", "value": "<new value>", "reason": "<one line>"}}], "notes": "<optional, what you fixed>"}}"""
+{{"files": [{{"path": "<file path as shown>", "content": "<full new file text>"}}], "hub_changes": [{{"key": "<hub key>", "value": "<new value>", "reason": "<one line>"}}], "notes": "<optional, what you fixed, at most {notes_asked} characters>"}}"""
 
 
 def rules_block() -> str:
@@ -104,15 +107,15 @@ def rules_block() -> str:
 
 
 def worker_system() -> str:
-    return WORKER_SYSTEM.format(mandate=MANDATE_RULE, contract=worker_contract())
+    return WORKER_SYSTEM.format(mandate=MANDATE_RULE, contract=worker_contract(), reason_max=WORKER_REASON_MAX, notes_asked=NOTES_ASKED)
 
 
-SUB_LEAD_SYSTEM = """You lead a group of services of a bike-rental platform: {services} (owner teams: {teams}). Each service has a worker who fixed its operational risks without seeing the other workers. Workers cannot edit platform.yaml; they sent you requests to change it. The platform lead owns platform.yaml, decides every value, and is the only one who can grant a service its own override. Send the platform lead the requests your group stands behind: you may forward, merge, change or drop your workers' requests, or add your own. Each request is one hub key, one value and a one-line reason.
+SUB_LEAD_SYSTEM = """You lead a group of services of a bike-rental platform: {services} (owner teams: {teams}). Each service has a worker who fixed its operational risks without seeing the other workers. Workers cannot edit platform.yaml; they sent you requests to change it. The platform lead owns platform.yaml, decides every value, and is the only one who can grant a service its own override. Send the platform lead the requests your group stands behind: you may forward, merge, change or drop your workers' requests, or add your own. Each request is one hub key, one value and a one-line reason of at most {reason_max} characters.
 The rules the workers followed: {rules}
 Reply with JSON only, no prose, matching: {{"requests": [{{"key": "<hub key>", "value": "<value>", "reason": "<one line>"}}]}} (requests may be empty)"""
 
 TOP_SYSTEM = """You own platform.yaml. Workers fixed services in parallel without seeing each other's work and could not edit platform.yaml: they sent change requests. {management}
-Decide the final value of every requested key so every service keeps working. You may accept a request, merge several, or keep the current value.
+Decide the final value of every requested key so every service keeps working. Keep each reason to at most {reason_max} characters. You may accept a request, merge several, or keep the current value.
 Workers could not write service overrides; you can. If a hub value would break a service or leave its need unmet, you may grant that service its own override (only http.default_timeout or http.default_rate_limit, in that service's service.yaml).{needs_sentence}
 Reply with JSON only, no prose, matching: {{"hub": [{{"key": "<hub key>", "value": "<final value>", "reason": "<one line>"}}], "overrides": [{{"service": "<service>", "key": "<http key>", "value": "<value>", "reason": "<one line>"}}]}} (overrides may be empty)"""
 
@@ -122,7 +125,7 @@ NEEDS_SENTENCE = " The needs of every service with one are listed, including ser
 
 
 def top_system(*, tiered: bool, needs: bool) -> str:
-    return TOP_SYSTEM.format(management=MANAGEMENT_TIERED if tiered else MANAGEMENT_FLAT, needs_sentence=NEEDS_SENTENCE if needs else "")
+    return TOP_SYSTEM.format(reason_max=LEAD_REASON_MAX, management=MANAGEMENT_TIERED if tiered else MANAGEMENT_FLAT, needs_sentence=NEEDS_SENTENCE if needs else "")
 
 
 def service_paths(repo: Path, service: str) -> list[str]:

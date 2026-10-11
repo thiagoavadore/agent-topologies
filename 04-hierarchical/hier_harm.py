@@ -4,7 +4,7 @@ from topologies.fixcheck import NotFixed, parse_duration, parse_rate
 from topologies.harbour import NEEDS, REGRESSION_NEEDS, OutsideContract
 
 PARSERS = {"http.default_timeout": parse_duration, "http.default_rate_limit": parse_rate}
-LADDER = ("not-threatened", "absorbed-at-sub-lead", "caught-at-top", "reached-hub", "introduced-by-top")
+LADDER = ("not-threatened", "absorbed-at-sub-lead", "caught-at-top", "top-failed", "reached-hub", "introduced-by-top", "introduced-by-workers")
 
 
 def readable(key: str, value) -> bool:
@@ -20,7 +20,7 @@ def readable(key: str, value) -> bool:
 
 
 def harms(key: str, value) -> list[str]:
-    """Regression needs that `value` for hub `key`, applied with no service override, would break."""
+    """Regression needs that `value` for hub `key`, applied with no service override, would break. The reason text is not read."""
     parse = PARSERS.get(key)
     if parse is None or not readable(key, value):
         return []
@@ -51,15 +51,22 @@ def threatens(requests: list[dict], need_id: str) -> bool:
     return any(harm["need"] == need_id for request in requests for harm in request["harms"])
 
 
-def coupling_ladder(*, worker_requests: list[dict], requests_up: list[dict], regressed: list[str], tiered: bool) -> dict[str, str]:
-    """One outcome per regression need: where a threat to it was stopped, or that it got through."""
+def coupling_ladder(
+    *, worker_requests: list[dict], requests_up: list[dict], regressed: list[str], tiered: bool, top_failed: bool = False, regressed_by_workers: list[str] = ()
+) -> dict[str, str]:
+    """One outcome per regression need: where a threat to it was stopped, or that it got through.
+
+    A need already broken by the workers' files alone is `introduced-by-workers`; a threat is only `caught-at-top` if the platform lead answered.
+    """
     ladder = {}
     for need_id in REGRESSION_NEEDS:
         up = threatens(requests_up, need_id)
-        if need_id in regressed:
+        if need_id in regressed_by_workers:
+            ladder[need_id] = "introduced-by-workers"
+        elif need_id in regressed:
             ladder[need_id] = "reached-hub" if up else "introduced-by-top"
         elif up:
-            ladder[need_id] = "caught-at-top"
+            ladder[need_id] = "top-failed" if top_failed else "caught-at-top"
         elif tiered and threatens(worker_requests, need_id):
             ladder[need_id] = "absorbed-at-sub-lead"
         else:

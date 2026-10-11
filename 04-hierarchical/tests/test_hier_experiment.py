@@ -1,7 +1,7 @@
 import json
 
 import pytest
-from hier_helpers import Script, asking_workers, forward, protective_top
+from hier_helpers import Script, asking_workers, forward, protective_top, stable_commit  # noqa: F401
 
 import experiment
 import run as run_module

@@ -1,6 +1,6 @@
 import json
 
-from hier_helpers import PRICING_REASON, Script, asking_workers, changed_files, forward, payload, protective_top
+from hier_helpers import PRICING_REASON, Script, asking_workers, changed_files, forward, payload, protective_top, stable_commit  # noqa: F401
 
 from hier import rotated, run_pair, run_worker
 from hier_config import ARMS

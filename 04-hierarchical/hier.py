@@ -16,7 +16,7 @@ from pathlib import Path
 from hier_config import ARMS, CUT_OF_ARM, CUTS, LEAD_MODEL, NEEDS_ARMS, REGISTRY_ARMS, WORKER_MODEL, owner_team
 from hier_harm import classify, coupling_ladder
 from hier_hub import effective_timeouts, grant_override, mandate_violation, override_edits, parse_hub, scratch_copy, service_overrides, set_hub_values, strip_overrides
-from hier_prompts import SUB_LEAD_SCHEMA, SUB_LEAD_SYSTEM, TOP_SCHEMA, rules_block, service_paths, sub_lead_prompt, top_prompt, top_system, worker_prompt, worker_schema, worker_system
+from hier_prompts import LEAD_REASON_MAX, SUB_LEAD_SCHEMA, SUB_LEAD_SYSTEM, TOP_SCHEMA, rules_block, service_paths, sub_lead_prompt, top_prompt, top_system, worker_prompt, worker_schema, worker_system
 from topologies.fixcheck import CheckResult, NotFixed, check
 from topologies.guards import InvalidAfterRetry, call_and_validate
 from topologies.harbour import HUB_FILE, SERVICES, OutsideContract
@@ -119,7 +119,7 @@ def run_sub_lead(group: str, services: list[str], *, backend: Backend, model: st
     own = [worker for worker in workers if worker.service in services]
     teams = sorted({owner_team(service) or "none" for service in services})
     prompt = sub_lead_prompt(hub_text, base, services, own)
-    system = SUB_LEAD_SYSTEM.format(services=", ".join(services), teams=", ".join(teams), rules=rules_block())
+    system = SUB_LEAD_SYSTEM.format(services=", ".join(services), teams=", ".join(teams), rules=rules_block(), reason_max=LEAD_REASON_MAX)
     result = SubLeadResult(group=group, services=list(services), prompt_chars=len(prompt))
     forwarded = [dict(request) for worker in own for request in worker.hub_requests]
     try:
@@ -150,24 +150,22 @@ def run_sub_leads(cut: str, *, backend: Backend, model: str, hub_text: str, base
         return [future.result() for future in futures]
 
 
-def worker_requests_of(workers: list[WorkerResult]) -> list[dict]:
+def request_entry(origin: str, services: list[str], request: dict, base_hub: dict[str, str]) -> dict:
+    """A request with its harm list; `changes_hub` is False for a request that repeats the current hub value."""
+    changes_hub = str(request["value"]).strip() != base_hub[request["key"]]
+    return {"from": origin, "services": services, **request, "changes_hub": changes_hub, **classify(request["key"], request["value"], services)}
+
+
+def worker_requests_of(workers: list[WorkerResult], base_hub: dict[str, str]) -> list[dict]:
     """Every worker request with its harm list; inside means the harmed service is the worker's own."""
-    return [
-        {"from": worker.service, "services": [worker.service], **request, **classify(request["key"], request["value"], [worker.service])}
-        for worker in workers
-        for request in worker.hub_requests
-    ]
+    return [request_entry(worker.service, [worker.service], request, base_hub) for worker in workers for request in worker.hub_requests]
 
 
-def requests_up_of(arm: str, workers: list[WorkerResult], sub_leads: list[SubLeadResult]) -> list[dict]:
+def requests_up_of(arm: str, workers: list[WorkerResult], sub_leads: list[SubLeadResult], base_hub: dict[str, str]) -> list[dict]:
     """What reaches the platform lead: every worker request in flat, else every sub-lead request, each with its harm list."""
     if arm == "flat":
-        return worker_requests_of(workers)
-    return [
-        {"from": lead.group, "services": lead.services, **request, **classify(request["key"], request["value"], lead.services)}
-        for lead in sub_leads
-        for request in lead.requests
-    ]
+        return worker_requests_of(workers, base_hub)
+    return [request_entry(lead.group, lead.services, request, base_hub) for lead in sub_leads for request in lead.requests]
 
 
 def run_top(arm: str, *, backend: Backend, model: str, hub_text: str, requests_up: list[dict], cut: str | None) -> TopResult:
@@ -212,9 +210,16 @@ def score_record(result: CheckResult) -> dict:
 
 
 def code_commit() -> str:
+    """HEAD of the repo, with `-dirty` appended when the code, shared source or fixtures differ from it (results/ is ignored)."""
+    root = Path(__file__).resolve().parent.parent
     try:
-        done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent, capture_output=True, text=True)
-        return done.stdout.strip() if done.returncode == 0 else ""
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True)
+        if head.returncode != 0:
+            return ""
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--", "04-hierarchical", "src", "fixtures", ":(exclude)04-hierarchical/results"], cwd=root, capture_output=True, text=True
+        )
+        return head.stdout.strip() + ("-dirty" if status.stdout.strip() else "")
     except OSError:
         return ""
 
@@ -233,7 +238,9 @@ def resolve(*, workers: list[WorkerResult], top: TopResult, hub_text: str, base_
                 path.write_text(grant_override(path.read_text(encoding="utf-8"), grant["key"], grant["value"]), encoding="utf-8")
             except Exception as error:  # a worker may have left a service.yaml that no longer parses
                 grant_errors.append({**grant, "error": f"{type(error).__name__}: {str(error)[:200]}"})
-        decided = {key: item["value"] for key, item in top.decisions.items() if item["value"] != base_hub[key]}
+        usable = {key: item["value"] for key, item in top.decisions.items() if item["value"] and "\n" not in item["value"]}
+        unreadable_decisions = sorted(set(top.decisions) - set(usable))  # a blank value cannot be written to platform.yaml
+        decided = {key: value for key, value in usable.items() if value != base_hub[key]}
         (repo / HUB_FILE).write_text(set_hub_values(hub_text, decided), encoding="utf-8")
         final_hub = parse_hub((repo / HUB_FILE).read_text(encoding="utf-8"))
         timeouts_error = ""
@@ -247,6 +254,7 @@ def resolve(*, workers: list[WorkerResult], top: TopResult, hub_text: str, base_
         "final_hub": final_hub,
         "overrides_granted": top.grants,
         "grant_errors": grant_errors,
+        "unreadable_decisions": unreadable_decisions,
         "overrides_in_merged": overrides_in_merged,
         "effective_timeouts": timeouts,
         "timeouts_error": timeouts_error,
@@ -264,25 +272,53 @@ def primary_models(*results) -> list[str]:
     return sorted({model for item in results for model in item.served_primary})
 
 
-def run_arm(arm: str, *, backend: Backend, lead_model: str, hub_text: str, base_hub: dict[str, str], workers: list[WorkerResult], sub_leads: list[SubLeadResult]) -> dict:
+def call_errors_of(workers: list[WorkerResult], sub_leads: list[SubLeadResult], top: TopResult) -> list[dict]:
+    """Every tier result that carries an error (a backend exception or a reply that stayed invalid)."""
+    found = [{"tier": "worker", "who": item.service, "error": item.error} for item in workers if item.error]
+    found += [{"tier": "sub-lead", "who": item.group, "error": item.error} for item in sub_leads if item.error]
+    return found + ([{"tier": "top", "who": "platform-lead", "error": top.error}] if top.error else [])
+
+
+def model_mismatches(workers: list[WorkerResult], sub_leads: list[SubLeadResult], top: TopResult, worker_model: str, lead_model: str) -> list[dict]:
+    """Calls whose served model is known and is not the requested one."""
+    checked = [("worker", item.service, item, worker_model) for item in workers]
+    checked += [("sub-lead", item.group, item, lead_model) for item in sub_leads] + [("top", "platform-lead", top, lead_model)]
+    return [
+        {"tier": tier, "who": who, "requested": requested, "served": item.served_primary}
+        for tier, who, item, requested in checked
+        if item.served_primary and item.served_primary != [requested]
+    ]
+
+
+def run_arm(
+    arm: str, *, backend: Backend, worker_model: str, lead_model: str, hub_text: str, base_hub: dict[str, str], workers: list[WorkerResult],
+    sub_leads: list[SubLeadResult], regressed_by_workers: list[str],
+) -> dict:
     """The platform-lead call and the resolved, scored repo of one arm."""
     cut = CUT_OF_ARM.get(arm)
-    requests_up = requests_up_of(arm, workers, sub_leads)
+    requests_up = requests_up_of(arm, workers, sub_leads, base_hub)
     top = run_top(arm, backend=backend, model=lead_model, hub_text=hub_text, requests_up=requests_up, cut=cut)
     measured = resolve(workers=workers, top=top, hub_text=hub_text, base_hub=base_hub)
-    worker_requests = worker_requests_of(workers)
-    ladder = coupling_ladder(worker_requests=worker_requests, requests_up=requests_up, regressed=measured["score"]["regressed"], tiered=cut is not None)
+    worker_requests = worker_requests_of(workers, base_hub)
+    ladder = coupling_ladder(
+        worker_requests=worker_requests, requests_up=requests_up, regressed=measured["score"]["regressed"], tiered=cut is not None,
+        top_failed=top.called and bool(top.error), regressed_by_workers=regressed_by_workers,
+    )
     harmful_up = [harm for request in requests_up for harm in request["harms"]]
     sub_lead_tokens, worker_tokens = sum(lead.tokens for lead in sub_leads), sum(worker.tokens for worker in workers)
+    shared = arm in REGISTRY_ARMS
     return {
         "arm": arm,
         "sub_leads": [asdict(lead) for lead in sub_leads],
-        "sub_leads_shared_with": CUT_OF_ARM[arm] if arm in REGISTRY_ARMS else "",
+        "sub_leads_shared_with": CUT_OF_ARM[arm] if shared else "",
         "worker_requests": worker_requests,
         "requests_up": requests_up,
         "top": asdict(top),
         **measured,
+        "regressed_by_workers": regressed_by_workers,
         "escalations": len(requests_up),
+        "hub_changing_escalations": sum(1 for request in requests_up if request["changes_hub"]),
+        "unreadable_requests_up": sum(1 for request in requests_up if request["unreadable"]),
         "harmful_up_inside": sum(1 for harm in harmful_up if harm["inside"]),
         "harmful_up_outside": sum(1 for harm in harmful_up if not harm["inside"]),
         "harmful_worker_requests": sum(1 for request in worker_requests if request["harms"]),
@@ -292,7 +328,11 @@ def run_arm(arm: str, *, backend: Backend, lead_model: str, hub_text: str, base_
         "total_tokens": worker_tokens + sub_lead_tokens + top.tokens,
         "top_prompt_chars": top.prompt_chars,
         "lead_served_primary": primary_models(*sub_leads, top),
-        "wall_seconds_management": round(sum(lead.wall_seconds for lead in sub_leads) + top.wall_seconds, 1),
+        "sub_lead_fallbacks": sum(1 for lead in sub_leads if lead.fallback),
+        "call_errors": call_errors_of(workers, sub_leads, top),
+        "model_mismatches": model_mismatches(workers, sub_leads, top, worker_model, lead_model),
+        # Summed seconds of the calls (parallel calls add up, so this is not elapsed time); the reused sub-leads count in `by-runtime` only.
+        "management_call_seconds": round((0 if shared else sum(lead.wall_seconds for lead in sub_leads)) + top.wall_seconds, 1),
     }
 
 
@@ -309,12 +349,16 @@ def run_pair(*, run: int, backend: Backend, backend_name: str, worker_model: str
         started = time.monotonic()
         workers = run_workers(backend=backend, model=worker_model, base=base)
         workers_seconds = round(time.monotonic() - started, 1)
+        regressed_by_workers = resolve(workers=workers, top=TopResult(), hub_text=hub_text, base_hub=base_hub)["score"]["regressed"]
         sub_leads = {}
         for cut in dict.fromkeys(CUT_OF_ARM[arm] for arm in order if arm in CUT_OF_ARM):
             sub_leads[cut] = run_sub_leads(cut, backend=backend, model=lead_model, hub_text=hub_text, base=base, workers=workers)
 
     def one(arm: str) -> dict:
-        record = run_arm(arm, backend=backend, lead_model=lead_model, hub_text=hub_text, base_hub=base_hub, workers=workers, sub_leads=sub_leads.get(CUT_OF_ARM.get(arm), []))
+        record = run_arm(
+            arm, backend=backend, worker_model=worker_model, lead_model=lead_model, hub_text=hub_text, base_hub=base_hub, workers=workers,
+            sub_leads=sub_leads.get(CUT_OF_ARM.get(arm), []), regressed_by_workers=regressed_by_workers,
+        )
         return {
             "at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
             "run": run,

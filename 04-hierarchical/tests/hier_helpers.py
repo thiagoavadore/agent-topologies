@@ -10,6 +10,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 FOLDER = Path(__file__).resolve().parents[1]
 ROOT = FOLDER.parent
 MODULES = ("experiment", "run", "hier", "hier_config", "hier_hub", "hier_harm", "hier_prompts")
@@ -91,7 +93,7 @@ def protective_top(prompt: str) -> str:
     """Keeps 300ms and gives bookings-api and notifications their own timeouts when it can see pricing's constraint, else applies the highest timeout."""
     reasons = re.findall(r"Reason: (.*)", prompt.split("Change requests:")[1])
     sees_pricing = "Service needs (" in prompt or any("pricing" in reason for reason in reasons)
-    requested = re.findall(r"asks http\.default_timeout = '(\d+)s'", prompt)
+    requested = re.findall(r"asks http\.default_timeout = '(\d+)s'\. Reason", prompt)
     if sees_pricing:
         grants = [
             {"service": "bookings-api", "key": "http.default_timeout", "value": "15s", "reason": "charges take up to 12 s"},
@@ -130,3 +132,11 @@ class Script:
 
     def calls(self, role: str) -> list[tuple[str, str, str]]:
         return [(key, system, prompt) for found, key, system, prompt in self.prompts if found == role]
+
+
+@pytest.fixture(autouse=True)
+def stable_commit(monkeypatch):
+    """Rows record the code commit, which is dirty while the code is uncommitted; tests pin it."""
+    import hier
+
+    monkeypatch.setattr(hier, "code_commit", lambda: "abc123")

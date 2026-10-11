@@ -93,14 +93,19 @@ def summarise(path: Path) -> str:
     lead_served = {model for row in rows for model in row["lead_served_primary"]}
     if len(setups) > 1 or len(worker_served) > 1 or len(lead_served) > 1:
         raise ValueError(f"{path.name} mixes models, served models or backends; summarise one setup per file")
+    commits = {row["code_commit"] for row in rows}
+    if any(commit.endswith("-dirty") for commit in commits):
+        raise ValueError(f"{path.name} has rows run on uncommitted code ({sorted(commits)}); commit, then re-run")
+    if len(commits) > 1:
+        raise ValueError(f"{path.name} mixes code commits {sorted(commits)}; summarise one commit per file")
     worker_model, lead_model, backend = setups.pop()
     worker_served = sorted(worker_served.pop())
     by_arm = {arm: [row for row in rows if row["arm"] == arm] for arm in ARMS}
     present = [arm for arm, runs in by_arm.items() if runs]
     regression_columns = " | ".join(f"{short(need)} regressed" for need in REGRESSION_NEEDS)
     lines = [
-        f"| arm | n | risks fixed of {len(RISKS)}, mean (min) | runs with a regression | {regression_columns} | outside contract, mean | escalations, mean | harmful requests up, mean (inside / outside) | overrides granted, mean | distinct effective timeouts, mean | tokens, mean (workers / sub-leads / top) | management tokens, mean | platform-lead prompt chars, mean | management wall s, mean |",
-        "|---|---|---|---|" + "---|" * len(REGRESSION_NEEDS) + "---|---|---|---|---|---|---|---|---|",
+        f"| arm | n | risks fixed of {len(RISKS)}, mean (min) | runs with a regression | {regression_columns} | outside contract, mean | escalations, mean (hub-changing) | harmful requests up, mean (inside / outside) | overrides granted, mean | distinct effective timeouts, mean | tokens, mean (workers / sub-leads / top) | management tokens, mean | platform-lead prompt chars, mean |",
+        "|---|---|---|---|" + "---|" * len(REGRESSION_NEEDS) + "---|---|---|---|---|---|---|---|",
     ]
     for arm in present:
         runs = by_arm[arm]
@@ -110,11 +115,27 @@ def summarise(path: Path) -> str:
         lines.append(
             f"| {arm} | {len(runs)} | {mean(fixed):.1f} ({min(fixed)}) "
             f"| {sum(1 for row in runs if row['score']['regressions'])} of {len(runs)} | {per_need} "
-            f"| {mean(row['score']['outside_contract'] for row in runs):.1f} | {mean(row['escalations'] for row in runs):.1f} "
+            f"| {mean(row['score']['outside_contract'] for row in runs):.1f} | {mean(row['escalations'] for row in runs):.1f} ({mean(row['hub_changing_escalations'] for row in runs):.1f}) "
             f"| {mean(row['harmful_up_inside'] + row['harmful_up_outside'] for row in runs):.1f} ({mean(row['harmful_up_inside'] for row in runs):.1f} / {mean(row['harmful_up_outside'] for row in runs):.1f}) "
             f"| {mean(len(row['overrides_granted']) for row in runs):.1f} | {mean(row['distinct_timeouts'] for row in runs):.1f} "
             f"| {mean(row['total_tokens'] for row in runs):,.0f} ({mean(t['workers'] for t in tiers):,.0f} / {mean(t['sub_leads'] for t in tiers):,.0f} / {mean(t['top'] for t in tiers):,.0f}) "
-            f"| {mean(row['management_tokens'] for row in runs):,.0f} | {mean(row['top_prompt_chars'] for row in runs):,.0f} | {mean(row['wall_seconds_management'] for row in runs):.0f} |"
+            f"| {mean(row['management_tokens'] for row in runs):,.0f} | {mean(row['top_prompt_chars'] for row in runs):,.0f} |"
+        )
+    lines += [
+        "",
+        "Reliability (per arm; sub-lead calls are shared by `by-runtime-registry` and `by-runtime`, so read the registry row's fallbacks as a repeat):",
+        "",
+        "| arm | platform-lead calls that failed | sub-lead fallbacks (forwarded-unchanged) | unreadable requests up | unreadable platform-lead decisions | rows with any call error | rows with a served-model mismatch | management call seconds, mean (summed, not elapsed) |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for arm in present:
+        runs = by_arm[arm]
+        lines.append(
+            f"| {arm} | {sum(1 for row in runs if row['top']['error'])} of {sum(1 for row in runs if row['top']['called'])} "
+            f"| {sum(row['sub_lead_fallbacks'] for row in runs)} of {sum(len(row['sub_leads']) for row in runs)} "
+            f"| {sum(row['unreadable_requests_up'] for row in runs)} | {sum(len(row['unreadable_decisions']) for row in runs)} "
+            f"| {sum(1 for row in runs if row['call_errors'])} of {len(runs)} | {sum(1 for row in runs if row['model_mismatches'])} of {len(runs)} "
+            f"| {mean(row['management_call_seconds'] for row in runs):.0f} |"
         )
     lines += ["", "Coupling ladder, runs per outcome (where a threat to each regression need was stopped):", "", "| arm | need | " + " | ".join(LADDER) + " |", "|---|---|" + "---|" * len(LADDER)]
     for arm in present:
