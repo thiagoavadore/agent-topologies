@@ -101,9 +101,22 @@ Return the full new text of every file you change and leave unchanged files out.
 {{"files": [{{"path": "<file path as shown>", "content": "<full new file text>"}}], "hub_changes": [{{"key": "<hub key>", "value": "<new value>", "reason": "<one line>"}}], "notes": "<optional, what you fixed, at most {notes_asked} characters>"}}"""
 
 
-def rules_block() -> str:
-    """The rules the workers decided under, for every lead, so no tier is judged against rules it never saw."""
-    return f"{MANDATE_RULE}\n{OVERRIDE_RULE}\n\nThe rules for changing the services:\n\n{worker_contract()}"
+RULE_8 = "8. **Code that reads platform values.**"
+LEAD_CONTRACTS = ("full", "blind")
+
+
+def lead_rules_block(contract: str = "full") -> str:
+    """The rules the workers decided under, for every lead. `blind` drops CONTRACT rule 8, the line that tells leads pricing-engine reads the hub timeout."""
+    text = worker_contract()
+    if contract == "blind":
+        lines = text.split("\n")
+        found = [index for index, line in enumerate(lines) if line.startswith(RULE_8)]
+        if len(found) != 1:
+            raise ValueError(f"expected CONTRACT.md to hold exactly one line starting {RULE_8!r}, found {len(found)}")
+        text = "\n".join(line for index, line in enumerate(lines) if index != found[0])
+    elif contract != "full":
+        raise ValueError(f"unknown lead contract {contract!r}: use {LEAD_CONTRACTS}")
+    return f"{MANDATE_RULE}\n{OVERRIDE_RULE}\n\nThe rules for changing the services:\n\n{text}"
 
 
 def worker_system() -> str:
@@ -118,6 +131,10 @@ TOP_SYSTEM = """You own platform.yaml. Workers fixed services in parallel withou
 Decide the final value of every requested key so every service keeps working. Keep each reason to at most {reason_max} characters. You may accept a request, merge several, or keep the current value.
 Workers could not write service overrides; you can. If a hub value would break a service or leave its need unmet, you may grant that service its own override (only http.default_timeout or http.default_rate_limit, in that service's service.yaml).{needs_sentence}
 Reply with JSON only, no prose, matching: {{"hub": [{{"key": "<hub key>", "value": "<final value>", "reason": "<one line>"}}], "overrides": [{{"service": "<service>", "key": "<http key>", "value": "<value>", "reason": "<one line>"}}]}} (overrides may be empty)"""
+
+def sub_lead_system(services: list[str], teams: list[str], contract: str = "full") -> str:
+    return SUB_LEAD_SYSTEM.format(services=", ".join(services), teams=", ".join(teams), rules=lead_rules_block(contract), reason_max=LEAD_REASON_MAX)
+
 
 MANAGEMENT_FLAT = "You manage the eight service workers directly."
 MANAGEMENT_TIERED = "Your sub-leads each lead a group of services (listed); they sent the change requests."
@@ -174,8 +191,8 @@ def sub_lead_prompt(hub_text: str, pristine: Path, services: list[str], worker_r
     return "\n\n".join(parts)
 
 
-def top_prompt(hub_text: str, requests_up: list[dict], groups: dict[str, list[str]], needs: bool) -> str:
-    parts = [f"=== {HUB_FILE} (current) ===\n{hub_text}", rules_block()]
+def top_prompt(hub_text: str, requests_up: list[dict], groups: dict[str, list[str]], needs: bool, contract: str = "full") -> str:
+    parts = [f"=== {HUB_FILE} (current) ===\n{hub_text}", lead_rules_block(contract)]
     if groups:
         parts.append("Groups:\n" + "\n".join(f"- {name}: {', '.join(services)}" for name, services in groups.items()))
     else:

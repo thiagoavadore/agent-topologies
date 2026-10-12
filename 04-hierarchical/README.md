@@ -127,6 +127,12 @@ Score: 8 hits, 2 misses, 1 mixed, over the 11 rows above.
 
 The surprises we named: `by-runtime` regressing no more than `by-team` happened (0 and 0), and so did the registry arm regressing as often as `by-runtime` (0 and 0), but both are the same finding: nothing regressed anywhere, so no comparison is possible. `absorbed-at-sub-lead` being common in `by-team` did not happen (0 of 10 for pricing-engine, 1 of 10 for payments-gateway). The honest reading of the "likeliest miss" is that rule 8 plus the lead's own caution protected pricing-engine whatever the cut, which is the limit below.
 
+## Blind-lead variant (added 12 Oct 2026, after the benchmark)
+
+A harness change made after the first benchmark, so it is dated and kept apart: it adds a mode, it does not change `full`. `--lead-contract blind` removes CONTRACT rule 8 (the line that says `pricing-engine/src/index.js` reads `PLATFORM_HTTP_TIMEOUT`) from the sub-lead system prompt and the platform-lead prompt. Workers keep the full contract. With `--lead-contract full`, the default, every prompt renders byte for byte as in the frozen benchmark (a hash test pins it). `flat` and `by-runtime-registry` still show the needs by design.
+
+`--replay-workers 04-hierarchical/results/runs.jsonl` reuses the published worker replies, one set per run index, with no worker call. Each blind index therefore pairs with the published index: same worker files and requests, same arm order. The source must be one code commit and one worker model, and it must hold every index asked for. Rows carry `lead_contract` and `workers_replayed_from`, land in `results/blind/runs.jsonl` and `results/blind/summary.md`, and the summary refuses a file that mixes contracts. The blind run has its own pre-registration (`predictions-blind-draft.md`, then a `## 04-hierarchical, blind leads:` section in `PREDICTIONS.md`). Results: TODO after the blind benchmark.
+
 ## Limits
 
 - **The trap was weaker than designed (read this first).** `CONTRACT.md` rule 8 goes to every lead and says pricing-engine reads the hub timeout, so no tier was blind to the coupling. In the dry runs the trap fired once in 3. In the benchmark it never fired (0 of 40 arm-runs regressed). This folder does not show that the cut cannot matter. It shows that when every lead is told what the shared file reaches, the owner of that file protects it whatever the tree. A task where the coupling is not written down in the contract is a different experiment.
@@ -153,6 +159,8 @@ uv run 04-hierarchical/run.py --arms by-team by-runtime --out ~/.cache/issue15/0
 uv run 04-hierarchical/experiment.py                                     # n=10, results/runs.jsonl
 uv run 04-hierarchical/experiment.py --parallel-arms                     # same, arms in parallel
 uv run 04-hierarchical/experiment.py --summarise-only
+uv run 04-hierarchical/run.py --run 3 --lead-contract blind --replay-workers 04-hierarchical/results/runs.jsonl --out ~/.cache/issue15/04-blind-scratch.jsonl
+uv run 04-hierarchical/experiment.py --lead-contract blind --replay-workers 04-hierarchical/results/runs.jsonl   # results/blind/
 ```
 
 `experiment.py` refuses to run until `docs/specs/spec-issue-15-04-05/predictions-draft.md` exists and no longer says DRAFT, and `PREDICTIONS.md` has a `## 04-hierarchical:` section. `run.py` is always allowed and refuses to write `results/runs.jsonl`. Keep one setup per `runs.jsonl`: the summary refuses a file that mixes models, served models or backends.
@@ -166,6 +174,7 @@ uv run 04-hierarchical/experiment.py --summarise-only
 | [`hier_harm.py`](hier_harm.py) | Which requests would break a regression need, inside or outside the requester's subtree, and the coupling ladder. |
 | [`hier_hub.py`](hier_hub.py) | Re-exports the hub, override and mandate helpers shared with 03 from [`src/topologies/hubfile.py`](../src/topologies/hubfile.py). |
 | [`hier_config.py`](hier_config.py) | The models, the arms, the two cuts, owner teams. |
+| [`hier_replay.py`](hier_replay.py) | Loads the worker replies of a published run for `--replay-workers`. |
 | [`run.py`](run.py) | One paired run, printed. |
 | [`experiment.py`](experiment.py) | The benchmark loop, the summary and the pre-registration guard. |
 | [`tests/`](tests/) | Scripted-model tests: no model calls. |

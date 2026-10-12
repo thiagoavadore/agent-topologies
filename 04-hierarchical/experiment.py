@@ -17,6 +17,8 @@ from pathlib import Path
 
 from hier import run_pair
 from hier_config import ARMS, LEAD_MODEL, WORKER_MODEL
+from hier_prompts import LEAD_CONTRACTS
+from hier_replay import Replay, load_replay
 from hier_harm import LADDER
 from topologies.guards import SkippedWork, describe_skipped, may_start_group
 from topologies.harbour import REGRESSION_NEEDS, RISKS
@@ -27,27 +29,38 @@ ROOT = HERE.parent
 DRAFT_FILE = ROOT / "docs/specs/spec-issue-15-04-05/predictions-draft.md"
 PREDICTIONS = ROOT / "PREDICTIONS.md"
 HEADING = "## 04-hierarchical:"
+BLIND_DRAFT_FILE = ROOT / "docs/specs/spec-issue-15-04-05/predictions-blind-draft.md"
+BLIND_HEADING = "## 04-hierarchical, blind leads:"
+RESULTS = HERE / "results"
+BLIND_RESULTS = RESULTS / "blind"
 DEFAULT_N = 10
 
 
-def refuse_unregistered() -> None:
-    """Pre-registration: no benchmark run while the predictions are a draft, missing or not in PREDICTIONS.md."""
-    if not DRAFT_FILE.exists():
-        raise SystemExit(f"Refusing to run: {DRAFT_FILE} is missing. Write and approve the predictions before the benchmark.")
-    if "DRAFT" in DRAFT_FILE.read_text(encoding="utf-8"):
-        raise SystemExit(f"Refusing to run: {DRAFT_FILE.name} still says DRAFT. Get the predictions approved and frozen first (run.py is still allowed).")
-    if not PREDICTIONS.exists() or HEADING not in PREDICTIONS.read_text(encoding="utf-8"):
-        raise SystemExit(f"Refusing to run: {PREDICTIONS.name} has no section starting {HEADING!r}. Append the frozen predictions and commit them first.")
+def refuse_unregistered(lead_contract: str = "full") -> None:
+    """Pre-registration: no benchmark run while the predictions are a draft, missing or not in PREDICTIONS.md (blind runs have their own)."""
+    draft, heading = (BLIND_DRAFT_FILE, BLIND_HEADING) if lead_contract == "blind" else (DRAFT_FILE, HEADING)
+    if not draft.exists():
+        raise SystemExit(f"Refusing to run: {draft} is missing. Write and approve the predictions before the benchmark.")
+    if "DRAFT" in draft.read_text(encoding="utf-8"):
+        raise SystemExit(f"Refusing to run: {draft.name} still says DRAFT. Get the predictions approved and frozen first (run.py is still allowed).")
+    if not PREDICTIONS.exists() or heading not in PREDICTIONS.read_text(encoding="utf-8"):
+        raise SystemExit(f"Refusing to run: {PREDICTIONS.name} has no section starting {heading!r}. Append the frozen predictions and commit them first.")
 
 
 def pair_tokens(rows: list[dict]) -> int:
     """Tokens actually spent on one run index: shared calls (workers, reused sub-leads) are counted once."""
-    workers = rows[0]["tokens_by_tier"]["workers"]
+    workers = 0 if rows[0].get("workers_replayed_from") else rows[0]["tokens_by_tier"]["workers"]  # replayed workers cost no call
     sub_leads = sum(row["tokens_by_tier"]["sub_leads"] for row in rows if not row["sub_leads_shared_with"])
     return workers + sub_leads + sum(row["tokens_by_tier"]["top"] for row in rows)
 
 
-def run_pairs(n: int, arms: list[str], out: Path, backend_name: str | None, worker_model: str, lead_model: str, parallel_arms: bool = False, token_ceiling: int | None = None) -> None:
+def run_pairs(
+    n: int, arms: list[str], out: Path, backend_name: str | None, worker_model: str, lead_model: str, parallel_arms: bool = False,
+    token_ceiling: int | None = None, lead_contract: str = "full", replay: Replay | None = None,
+) -> None:
+    missing = [index for index in range(1, n + 1) if replay and index not in replay.workers_by_run]
+    if missing:
+        raise SystemExit(f"Refusing to run: replay source {replay.path} has no run index {missing}")
     backend_name = backend_name or os.environ.get("TOPOLOGIES_BACKEND", "claude-cli")
     backend = backend_from_name(backend_name)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -56,7 +69,11 @@ def run_pairs(n: int, arms: list[str], out: Path, backend_name: str | None, work
         if not may_start_group(spent, token_ceiling):
             skipped.append(SkippedWork(f"run {index + 1}", f"token ceiling {token_ceiling} reached at {spent}"))
             continue
-        rows = run_pair(run=index + 1, backend=backend, backend_name=backend_name, worker_model=worker_model, lead_model=lead_model, arms=arms, parallel_arms=parallel_arms)
+        rows = run_pair(
+            run=index + 1, backend=backend, backend_name=backend_name, worker_model=replay.worker_model if replay else worker_model, lead_model=lead_model, arms=arms,
+            parallel_arms=parallel_arms, lead_contract=lead_contract, workers=replay.workers_for(index + 1) if replay else None,
+            workers_replayed_from=replay.source() if replay else None,
+        )
         spent += pair_tokens(rows)
         with out.open("a") as handle:
             handle.writelines(json.dumps(row) + "\n" for row in rows)
@@ -88,6 +105,14 @@ def summarise(path: Path) -> str:
     if not path.exists():
         return f"No runs at {path}."
     rows = load_rows(path)
+    contracts = {row.get("lead_contract", "full") for row in rows}
+    if len(contracts) > 1:
+        raise ValueError(f"{path.name} mixes lead contracts {sorted(contracts)}; summarise one contract per file")
+    contract = contracts.pop()
+    replayed = {json.dumps(row.get("workers_replayed_from") or {}, sort_keys=True) for row in rows}
+    if len(replayed) > 1:
+        raise ValueError(f"{path.name} mixes worker sources {sorted(replayed)}; summarise one source per file")
+    replay_source = json.loads(replayed.pop())
     setups = {(row["worker_model"], row["lead_model"], row["backend"]) for row in rows}
     worker_served = {tuple(row["worker_served_primary"]) for row in rows}  # the same in every row of a run
     lead_served = {model for row in rows for model in row["lead_served_primary"]}
@@ -159,7 +184,9 @@ def summarise(path: Path) -> str:
     served = f"workers {', '.join(worker_served) or 'not reported'}, leads {', '.join(sorted(lead_served)) or 'not reported'}"
     lines.append(
         f"\nWorkers {worker_model}, leads {lead_model} (served: {served}), backend {backend}. Run dates: {', '.join(sorted({row['at'][:10] for row in rows}))}. "
-        "Worker tokens are the same in all arm rows of a run, and the by-runtime-registry row repeats the by-runtime sub-lead tokens (the calls ran once), so do not sum tokens across rows."
+        + (" Leads were blind to CONTRACT rule 8 (the line naming pricing-engine's use of PLATFORM_HTTP_TIMEOUT)." if contract == "blind" else "")
+        + (f" Worker replies were replayed from {replay_source['path']} (code {replay_source['code_commit']}), so worker tokens were not spent here." if replay_source else "")
+        + " Worker tokens are the same in all arm rows of a run, and the by-runtime-registry row repeats the by-runtime sub-lead tokens (the calls ran once), so do not sum tokens across rows."
     )
     return "\n".join(lines)
 
@@ -170,16 +197,23 @@ def main() -> None:
     parser.add_argument("--arms", nargs="+", default=list(ARMS), choices=ARMS)
     parser.add_argument("--parallel-arms", action="store_true", help="run the arms of one index in parallel")
     parser.add_argument("--token-ceiling", type=int, default=None, help="stop starting new run indexes once this many tokens are spent")
-    parser.add_argument("--out", type=Path, default=HERE / "results" / "runs.jsonl")
-    parser.add_argument("--summary", type=Path, default=HERE / "results" / "summary.md")
+    parser.add_argument("--lead-contract", choices=LEAD_CONTRACTS, default="full", help="blind withholds CONTRACT rule 8 from the sub-leads and the platform lead")
+    parser.add_argument("--replay-workers", type=Path, default=None, help="reuse the worker replies of this runs.jsonl (no worker call)")
+    parser.add_argument("--out", type=Path, default=None, help="default results/runs.jsonl, or results/blind/runs.jsonl with --lead-contract blind")
+    parser.add_argument("--summary", type=Path, default=None)
     parser.add_argument("--backend", default=None, help="claude-cli (default) or anthropic-sdk")
     parser.add_argument("--worker-model", default=WORKER_MODEL)
     parser.add_argument("--lead-model", default=LEAD_MODEL)
     parser.add_argument("--summarise-only", action="store_true")
     args = parser.parse_args()
+    folder = BLIND_RESULTS if args.lead_contract == "blind" else RESULTS
+    args.out, args.summary = args.out or folder / "runs.jsonl", args.summary or folder / "summary.md"
+    if args.lead_contract == "blind" and args.out.resolve() == (RESULTS / "runs.jsonl").resolve():
+        raise SystemExit("Refusing to write blind rows to results/runs.jsonl: that file holds the full-contract benchmark. Use results/blind/.")
     if not args.summarise_only:
-        refuse_unregistered()
-        run_pairs(args.n, args.arms, args.out, args.backend, args.worker_model, args.lead_model, args.parallel_arms, args.token_ceiling)
+        refuse_unregistered(args.lead_contract)
+        replay = load_replay(args.replay_workers) if args.replay_workers else None
+        run_pairs(args.n, args.arms, args.out, args.backend, args.worker_model, args.lead_model, args.parallel_arms, args.token_ceiling, args.lead_contract, replay)
     table = summarise(args.out)
     args.summary.parent.mkdir(parents=True, exist_ok=True)
     args.summary.write_text(table + "\n")

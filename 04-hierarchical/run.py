@@ -9,7 +9,9 @@ import os
 from pathlib import Path
 
 from hier import run_pair
+from hier_replay import load_replay
 from hier_config import ARMS, LEAD_MODEL, WORKER_MODEL
+from hier_prompts import LEAD_CONTRACTS
 from topologies.model import backend_from_name
 
 BENCHMARK_FILE = Path(__file__).resolve().parent / "results" / "runs.jsonl"
@@ -23,6 +25,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lead-model", default=LEAD_MODEL)
     parser.add_argument("--run", type=int, default=1, help="run index, which sets the arm order")
     parser.add_argument("--parallel-arms", action="store_true")
+    parser.add_argument("--lead-contract", choices=LEAD_CONTRACTS, default="full", help="blind withholds CONTRACT rule 8 from the sub-leads and the platform lead")
+    parser.add_argument("--replay-workers", type=Path, default=None, help="reuse the worker replies of this runs.jsonl for --run (no worker call)")
     parser.add_argument("--out", type=Path, default=None, help="append the full run records to this scratch JSONL file")
     parser.add_argument("--json", action="store_true", help="print the full run records as JSON")
     return parser.parse_args()
@@ -35,7 +39,7 @@ def request_text(item: dict) -> str:
 
 def describe(row: dict) -> str:
     score = row["score"]
-    lines = [f"== {row['arm']} (run {row['run']})"]
+    lines = [f"== {row['arm']} (run {row['run']}) [{row['lead_contract']} leads]"]
     for lead in row["sub_leads"]:
         flag = f" [{lead['fallback']}]" if lead["fallback"] else ""
         lines.append(f"sub-lead {lead['group']}: {len(lead['requests'])} requests{flag}")
@@ -59,11 +63,15 @@ def main() -> None:
     if args.out and args.out.resolve() == BENCHMARK_FILE:
         raise SystemExit("run.py never writes results/runs.jsonl: that file is for experiment.py. Pick a scratch file for --out.")
     backend_name = args.backend or os.environ.get("TOPOLOGIES_BACKEND", "claude-cli")
+    replay = load_replay(args.replay_workers) if args.replay_workers else None
     rows = run_pair(
         run=args.run,
         backend=backend_from_name(backend_name),
         backend_name=backend_name,
-        worker_model=args.worker_model,
+        worker_model=replay.worker_model if replay else args.worker_model,
+        lead_contract=args.lead_contract,
+        workers=replay.workers_for(args.run) if replay else None,
+        workers_replayed_from=replay.source() if replay else None,
         lead_model=args.lead_model,
         arms=args.arms,
         parallel_arms=args.parallel_arms,
@@ -73,7 +81,7 @@ def main() -> None:
         with args.out.open("a") as handle:
             handle.writelines(json.dumps(row) + "\n" for row in rows)
     first = rows[0]
-    print(f"workers {first['wall_seconds_workers']}s: " + ", ".join(f"{w['service']} {w['status']}" for w in first["workers"]))
+    print(f"workers {'replayed from ' + first['workers_replayed_from']['path'] if first['workers_replayed_from'] else str(first['wall_seconds_workers']) + 's'}: " + ", ".join(f"{w['service']} {w['status']}" for w in first["workers"]))
     print(json.dumps(rows, indent=2) if args.json else "\n\n".join(describe(row) for row in rows))
 
 

@@ -16,7 +16,7 @@ from pathlib import Path
 from hier_config import ARMS, CUT_OF_ARM, CUTS, LEAD_MODEL, NEEDS_ARMS, REGISTRY_ARMS, WORKER_MODEL, owner_team
 from hier_harm import classify, coupling_ladder
 from hier_hub import effective_timeouts, grant_override, mandate_violation, override_edits, parse_hub, scratch_copy, service_overrides, set_hub_values, strip_overrides
-from hier_prompts import LEAD_REASON_MAX, SUB_LEAD_SCHEMA, SUB_LEAD_SYSTEM, TOP_SCHEMA, rules_block, service_paths, sub_lead_prompt, top_prompt, top_system, worker_prompt, worker_schema, worker_system
+from hier_prompts import LEAD_CONTRACTS, SUB_LEAD_SCHEMA, TOP_SCHEMA, service_paths, sub_lead_prompt, sub_lead_system, top_prompt, top_system, worker_prompt, worker_schema, worker_system
 from topologies.fixcheck import CheckResult, NotFixed, check
 from topologies.guards import InvalidAfterRetry, call_and_validate
 from topologies.harbour import HUB_FILE, SERVICES, OutsideContract
@@ -114,12 +114,12 @@ def run_workers(*, backend: Backend, model: str, base: Path) -> list[WorkerResul
         return [future.result() for future in futures]
 
 
-def run_sub_lead(group: str, services: list[str], *, backend: Backend, model: str, hub_text: str, base: Path, workers: list[WorkerResult]) -> SubLeadResult:
+def run_sub_lead(group: str, services: list[str], *, backend: Backend, model: str, hub_text: str, base: Path, workers: list[WorkerResult], lead_contract: str = "full") -> SubLeadResult:
     started = time.monotonic()
     own = [worker for worker in workers if worker.service in services]
     teams = sorted({owner_team(service) or "none" for service in services})
     prompt = sub_lead_prompt(hub_text, base, services, own)
-    system = SUB_LEAD_SYSTEM.format(services=", ".join(services), teams=", ".join(teams), rules=rules_block(), reason_max=LEAD_REASON_MAX)
+    system = sub_lead_system(services, teams, lead_contract)
     result = SubLeadResult(group=group, services=list(services), prompt_chars=len(prompt))
     forwarded = [dict(request) for worker in own for request in worker.hub_requests]
     try:
@@ -140,11 +140,11 @@ def run_sub_lead(group: str, services: list[str], *, backend: Backend, model: st
     return result
 
 
-def run_sub_leads(cut: str, *, backend: Backend, model: str, hub_text: str, base: Path, workers: list[WorkerResult]) -> list[SubLeadResult]:
+def run_sub_leads(cut: str, *, backend: Backend, model: str, hub_text: str, base: Path, workers: list[WorkerResult], lead_contract: str = "full") -> list[SubLeadResult]:
     groups = CUTS[cut]
     with ThreadPoolExecutor(max_workers=len(groups)) as pool:
         futures = [
-            pool.submit(run_sub_lead, group, services, backend=backend, model=model, hub_text=hub_text, base=base, workers=workers)
+            pool.submit(run_sub_lead, group, services, backend=backend, model=model, hub_text=hub_text, base=base, workers=workers, lead_contract=lead_contract)
             for group, services in groups.items()
         ]
         return [future.result() for future in futures]
@@ -168,13 +168,13 @@ def requests_up_of(arm: str, workers: list[WorkerResult], sub_leads: list[SubLea
     return [request_entry(lead.group, lead.services, request, base_hub) for lead in sub_leads for request in lead.requests]
 
 
-def run_top(arm: str, *, backend: Backend, model: str, hub_text: str, requests_up: list[dict], cut: str | None) -> TopResult:
+def run_top(arm: str, *, backend: Backend, model: str, hub_text: str, requests_up: list[dict], cut: str | None, lead_contract: str = "full") -> TopResult:
     """One platform-lead call; none when no request reaches it, and the hub then stays as it is."""
     if not requests_up:
         return TopResult()
     started = time.monotonic()
     groups = CUTS[cut] if cut else {}
-    prompt = top_prompt(hub_text, requests_up, groups, needs=arm in NEEDS_ARMS)
+    prompt = top_prompt(hub_text, requests_up, groups, needs=arm in NEEDS_ARMS, contract=lead_contract)
     system = top_system(tiered=cut is not None, needs=arm in NEEDS_ARMS)
     result = TopResult(called=True, prompt_chars=len(prompt))
     try:
@@ -292,12 +292,12 @@ def model_mismatches(workers: list[WorkerResult], sub_leads: list[SubLeadResult]
 
 def run_arm(
     arm: str, *, backend: Backend, worker_model: str, lead_model: str, hub_text: str, base_hub: dict[str, str], workers: list[WorkerResult],
-    sub_leads: list[SubLeadResult], regressed_by_workers: list[str],
+    sub_leads: list[SubLeadResult], regressed_by_workers: list[str], lead_contract: str = "full",
 ) -> dict:
     """The platform-lead call and the resolved, scored repo of one arm."""
     cut = CUT_OF_ARM.get(arm)
     requests_up = requests_up_of(arm, workers, sub_leads, base_hub)
-    top = run_top(arm, backend=backend, model=lead_model, hub_text=hub_text, requests_up=requests_up, cut=cut)
+    top = run_top(arm, backend=backend, model=lead_model, hub_text=hub_text, requests_up=requests_up, cut=cut, lead_contract=lead_contract)
     measured = resolve(workers=workers, top=top, hub_text=hub_text, base_hub=base_hub)
     worker_requests = worker_requests_of(workers, base_hub)
     ladder = coupling_ladder(
@@ -336,8 +336,13 @@ def run_arm(
     }
 
 
-def run_pair(*, run: int, backend: Backend, backend_name: str, worker_model: str = WORKER_MODEL, lead_model: str = LEAD_MODEL, arms: list[str] | tuple[str, ...] = ARMS, parallel_arms: bool = False) -> list[dict]:
-    """One run index: workers once, sub-leads once per cut needed, then one platform-lead call and one scored repo per arm."""
+def run_pair(
+    *, run: int, backend: Backend, backend_name: str, worker_model: str = WORKER_MODEL, lead_model: str = LEAD_MODEL, arms: list[str] | tuple[str, ...] = ARMS,
+    parallel_arms: bool = False, lead_contract: str = "full", workers: list[WorkerResult] | None = None, workers_replayed_from: dict | None = None,
+) -> list[dict]:
+    """Run one index: workers (or the replayed `workers`), sub-leads per cut, then one platform-lead call and scored repo per arm."""
+    if lead_contract not in LEAD_CONTRACTS:
+        raise ValueError(f"unknown lead contract {lead_contract!r}: use {LEAD_CONTRACTS}")
     unknown = [arm for arm in arms if arm not in ARMS]
     if unknown:
         raise ValueError(f"unknown arms {unknown}: use {ARMS}")
@@ -347,17 +352,18 @@ def run_pair(*, run: int, backend: Backend, backend_name: str, worker_model: str
         hub_text = (base / HUB_FILE).read_text(encoding="utf-8")
         base_hub = parse_hub(hub_text)
         started = time.monotonic()
-        workers = run_workers(backend=backend, model=worker_model, base=base)
+        if workers is None:
+            workers = run_workers(backend=backend, model=worker_model, base=base)
         workers_seconds = round(time.monotonic() - started, 1)
         regressed_by_workers = resolve(workers=workers, top=TopResult(), hub_text=hub_text, base_hub=base_hub)["score"]["regressed"]
         sub_leads = {}
         for cut in dict.fromkeys(CUT_OF_ARM[arm] for arm in order if arm in CUT_OF_ARM):
-            sub_leads[cut] = run_sub_leads(cut, backend=backend, model=lead_model, hub_text=hub_text, base=base, workers=workers)
+            sub_leads[cut] = run_sub_leads(cut, backend=backend, model=lead_model, hub_text=hub_text, base=base, workers=workers, lead_contract=lead_contract)
 
     def one(arm: str) -> dict:
         record = run_arm(
             arm, backend=backend, worker_model=worker_model, lead_model=lead_model, hub_text=hub_text, base_hub=base_hub, workers=workers,
-            sub_leads=sub_leads.get(CUT_OF_ARM.get(arm), []), regressed_by_workers=regressed_by_workers,
+            sub_leads=sub_leads.get(CUT_OF_ARM.get(arm), []), regressed_by_workers=regressed_by_workers, lead_contract=lead_contract,
         )
         return {
             "at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
@@ -365,6 +371,8 @@ def run_pair(*, run: int, backend: Backend, backend_name: str, worker_model: str
             "backend": backend_name,
             "worker_model": worker_model,
             "lead_model": lead_model,
+            "lead_contract": lead_contract,
+            "workers_replayed_from": workers_replayed_from or {},
             "code_commit": code_commit(),
             "workers": [asdict(worker) for worker in workers],
             "worker_served_primary": primary_models(*workers),

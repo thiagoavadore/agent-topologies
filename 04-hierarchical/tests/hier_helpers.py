@@ -14,7 +14,7 @@ import pytest
 
 FOLDER = Path(__file__).resolve().parents[1]
 ROOT = FOLDER.parent
-MODULES = ("experiment", "run", "hier", "hier_config", "hier_hub", "hier_harm", "hier_prompts")
+MODULES = ("experiment", "run", "hier", "hier_config", "hier_hub", "hier_harm", "hier_prompts", "hier_replay", "hier_snapshot")
 
 
 def _isolate() -> None:
