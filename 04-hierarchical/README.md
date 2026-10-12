@@ -6,11 +6,7 @@ Should the agent layers match the team layers? Put middle managers between the w
 
 ## The short answer
 
-The cut did not matter on this task, and the layers added cost, not safety. Nothing regressed in any arm (0 of 10 runs in each of the four) and all 11 risks were fixed in all 40 arm-runs. The platform lead owns the shared file, so it saw every change whatever the tree above it looked like, and it kept the hub timeout at 300 ms in 39 of 40 arm-runs.
-
-The lead caught every harmful timeout request. For pricing-engine the ladder says `caught-at-top` in 10 of 10 runs in every arm. The sub-leads absorbed essentially nothing: the only threat stopped below the top was one rate-limit request against payments-gateway, in 1 run of each tiered arm. The management layer cost a lot for that: management tokens were 3,947 for `flat`, 23,018 for `by-team` (about 5.8x) and 17,681 for `by-runtime` (about 4.5x).
-
-Read this with the biggest limit in mind. `CONTRACT.md` rule 8 tells every lead that pricing-engine reads the hub timeout, so no tier was blind to the coupling. The trap was weaker than designed (in the dry runs it fired once in 3). The result is that a lead who knows the coupling exists will protect it whatever the cut, not that the cut can never matter. In the one run where the hub did go to 15s (`by-runtime-registry`, run 7), the platform lead granted pricing-engine its own 300 ms override in the same reply, and nothing regressed.
+On the first run the cut did not matter: nothing regressed in any arm (0 of 10 each), all 11 risks were fixed in all 40 arm-runs and the platform lead kept 300 ms in 39 of 40, but every lead had been told by `CONTRACT.md` rule 8 that pricing-engine reads the hub timeout. The layers added cost, not safety: management tokens were 3,947 for `flat`, 23,018 for `by-team` (about 5.8x) and 17,681 for `by-runtime` (about 4.5x). A second run took rule 8 out of every lead's prompt (worker replies replayed, so the runs are paired) and only `by-runtime` broke anything: 2 of 10 runs (6 and 8), where the hub went to 15s and pricing-engine regressed, against 0 of 10 for `flat`, `by-team` and `by-runtime-registry`. By our pre-registered rule (3 or more of 10 for `by-runtime` while `by-team` stays at 0 or 1) that is not called an effect, but it is the only arm in 80 arm-runs that broke anything, and it is the cut that separates pricing-engine from the services that wanted the raise.
 
 ## The experiment
 
@@ -131,11 +127,49 @@ The surprises we named: `by-runtime` regressing no more than `by-team` happened 
 
 A harness change made after the first benchmark, so it is dated and kept apart: it adds a mode, it does not change `full`. `--lead-contract blind` removes CONTRACT rule 8 (the line that says `pricing-engine/src/index.js` reads `PLATFORM_HTTP_TIMEOUT`) from the sub-lead system prompt and the platform-lead prompt. Workers keep the full contract. With `--lead-contract full`, the default, every prompt renders byte for byte as in the frozen benchmark (a hash test pins it). `flat` and `by-runtime-registry` still show the needs by design.
 
-`--replay-workers 04-hierarchical/results/runs.jsonl` reuses the published worker replies, one set per run index, with no worker call. Each blind index therefore pairs with the published index: same worker files and requests, same arm order. The source must be one code commit and one worker model, and it must hold every index asked for. Rows carry `lead_contract` and `workers_replayed_from`, land in `results/blind/runs.jsonl` and `results/blind/summary.md`, and the summary refuses a file that mixes contracts. The blind run has its own pre-registration (`predictions-blind-draft.md`, then a `## 04-hierarchical, blind leads:` section in `PREDICTIONS.md`). Results: TODO after the blind benchmark.
+`--replay-workers 04-hierarchical/results/runs.jsonl` reuses the published worker replies, one set per run index, with no worker call. Each blind index therefore pairs with the published index: same worker files and requests, same arm order. The source must be one code commit and one worker model, and it must hold every index asked for. Rows carry `lead_contract` and `workers_replayed_from`, land in `results/blind/runs.jsonl` and `results/blind/summary.md`, and the summary refuses a file that mixes contracts. The blind run has its own pre-registration (`predictions-blind-draft.md`, then a `## 04-hierarchical, blind leads:` section in `PREDICTIONS.md`). Results: [Blind leads (second run)](#blind-leads-second-run-12-oct-2026) below.
+
+## Blind leads (second run, 12 Oct 2026)
+
+Run on 12 Oct 2026, n=10 per arm, on code commit `894edf0` (the commit that froze the blind predictions; all 40 rows recorded it). Leads got the contract without rule 8, workers were replayed from the published run, so run index and worker files pair one to one. Tokens count everything sent and received. Data: [`results/blind/summary.md`](results/blind/summary.md) and [`results/blind/runs.jsonl`](results/blind/runs.jsonl). The comparison below was computed by script over the blind and published `runs.jsonl`, keyed by (run, arm).
+
+| Arm | Runs with a regression, blind (published) | Final hub timeout 300 ms, blind (published) | Paired flips (runs whose final hub timeout differs) | Management tokens, blind (published) | Ratio |
+|---|---|---|---|---|---|
+| `flat` | 0 of 10 (0 of 10) | 10 of 10 (10 of 10) | 0 | 3,840 (3,947) | 0.97 |
+| `by-team` | 0 of 10 (0 of 10) | 10 of 10 (10 of 10) | 0 | 22,765 (23,018) | 0.99 |
+| `by-runtime` | 2 of 10 (0 of 10) | 8 of 10 (10 of 10) | 2 (runs 6, 8) | 16,085 (17,681) | 0.91 |
+| `by-runtime-registry` | 0 of 10 (0 of 10) | 9 of 10 (9 of 10) | 2 (runs 6, 7) | 16,329 (17,973) | 0.91 |
+
+Pricing-engine ladder, blind: `caught-at-top` in 10 of 10 runs for `flat`, `by-team` and `by-runtime-registry`; for `by-runtime` 8 `caught-at-top` and 2 `reached-hub`. payments-gateway: nothing regressed, 1 `absorbed-at-sub-lead` in each tiered arm, as before. Risks fixed: 11.0 in every arm, minimum 11. Overrides granted, mean: 2.5, 3.0, 2.7, 2.8 (published 2.8, 2.8, 3.0, 2.8). 0 platform-lead calls failed and 0 sub-lead calls fell back in any arm.
+
+What this tells us:
+
+- **`by-runtime` regressed pricing-engine in 2 of 10 runs, runs 6 and 8.** In both the lead set the hub timeout to 15s (its reasons: both python services need longer, no other group objected) and pricing-engine kept the hub value, 15.0s. In the published run the same indexes held 300 ms.
+- **By the rule we set first, this is not an effect.** We said we would call it one only if `by-runtime` regressed in 3 or more of 10 while `by-team` stayed at 0 or 1. It was 2 of 10, and `by-team` was 0 of 10. We do not call it an effect. We also do not call it noise: it is the only arm in 80 arm-runs (40 published, 40 blind) that broke anything, and `by-runtime` is the cut that puts pricing-engine in one group and bookings-api and notifications, the two services that wanted the raise, in another.
+- **`by-team` held without rule 8.** 0 of 10, and the lead kept 300 ms in all 10. rentals-and-money keeps pricing-engine and its callers in one group, so pricing's bound travels up with the request, a channel the blind contract does not touch.
+- **The registry arm raised the hub to 15s in run 6 and did not regress.** The lead accepted the 15s request and granted pricing-engine a 300 ms override in the same reply, as in published run 7 of this arm. Paired against the published run, it raised in run 6 and held in run 7, so the registry moves where the raise happens, and the override keeps the damage out.
+- **Blind leads cost less.** Management tokens are 9% lower for `by-runtime` and the registry arm, 1 to 3% lower for the others. Rule 8 is about 200 characters, so the gap is mostly different lead replies, not the prompt.
+
+Predictions, frozen on 12 Oct 2026 in [`PREDICTIONS.md`](../PREDICTIONS.md) (section "04-hierarchical, blind leads", commit `894edf0`), before any blind run:
+
+| Prediction | Result |
+|---|---|
+| Runs with a regression: `flat` 0 to 1, `by-team` 0 to 1, `by-runtime` 0 to 3 (most likely 0 to 1), `by-runtime-registry` 0 to 1 | **Hit.** 0, 0, 2 and 0 of 10. The 2 is inside the stated range, above the "most likely" 0 to 1. |
+| Final hub timeout 300 ms: `flat` 10, `by-team` 10, `by-runtime` 7 to 10, registry 9 to 10 | **Hit.** 10, 10, 8 and 9. |
+| Pricing ladder: `caught-at-top` everywhere, plus `reached-hub` in `by-runtime` runs that regress | **Hit.** 10, 10, 8 plus 2 `reached-hub`, 10. |
+| Paired flips against the published run: `flat` 0 to 1, `by-team` 0 to 1, `by-runtime` 0 to 3 | **Hit.** 0, 0 and 2. |
+| Paired flips: `by-runtime-registry` 0 to 1 | **Miss.** 2 (runs 6 and 7). |
+| Overrides granted, mean: about 2.8, 2.8, 3, 2.8 | **Hit.** 2.5, 3.0, 2.7, 2.8, all within 0.3. |
+| Risks fixed: 11 in all | **Hit.** 11.0 and minimum 11 in every arm. |
+| Management tokens within 5% of the published run: `flat`, `by-team` | **Hit.** Ratios 0.97 and 0.99. |
+| Management tokens within 5% of the published run: `by-runtime`, `by-runtime-registry` | **Miss.** Ratios 0.91 and 0.91. |
+
+Score: 7 hits, 2 misses over the 9 rows (22 hits and 3 misses over the 25 arm-level cells). What would surprise us: `by-runtime` blind at 4 or more regressions, or `by-team` blind regressing. Neither happened.
 
 ## Limits
 
-- **The trap was weaker than designed (read this first).** `CONTRACT.md` rule 8 goes to every lead and says pricing-engine reads the hub timeout, so no tier was blind to the coupling. In the dry runs the trap fired once in 3. In the benchmark it never fired (0 of 40 arm-runs regressed). This folder does not show that the cut cannot matter. It shows that when every lead is told what the shared file reaches, the owner of that file protects it whatever the tree. A task where the coupling is not written down in the contract is a different experiment.
+- **Rule 8 (addressed by the blind run, with what remains).** In the first run `CONTRACT.md` rule 8 went to every lead and named pricing-engine as a reader of the hub timeout, so no tier was blind to the coupling and nothing regressed. The blind run removed it from every lead's prompt: `by-runtime` regressed in 2 of 10, the others in 0. What remains: n=10 per arm, one task, and the 2 of 10 is below our pre-registered threshold. `OVERRIDE_RULE`, which tells every lead that only the platform lead grants overrides, is in the blind prompts too and still hedges the top: the lead can grant pricing-engine an exception, and in the other arms it did. The blind run also keeps the needs in `flat` and the registry arm by design. This folder shows the cut can matter when no lead is told what the shared file reaches. It does not measure how often.
+- Debt paid between the two runs: the hub, override and mandate helpers that `hier_hub.py` copied from 03 now live in [`src/topologies/hubfile.py`](../src/topologies/hubfile.py). The checker label fix made for 03 and 05 does not affect 04: outside contract is 0.0 in every arm in both runs.
 - One task, n=10 per arm. Comparisons hold inside this folder only, never against 01, 02 or 03.
 - Claude models only: Sonnet 5.5 workers, Opus 5.5 leads, one backend (`claude-cli`).
 - The harness applies the edits, so this measures where a coupling is resolved, not how well agents edit files. Workers reply once with full file contents and have no tools.
