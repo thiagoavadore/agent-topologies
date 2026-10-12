@@ -131,7 +131,7 @@ A harness change made after the first benchmark, so it is dated and kept apart: 
 
 ## Blind leads (second run, 12 Oct 2026)
 
-Run on 12 Oct 2026, n=10 per arm, on code commit `894edf0` (the commit that froze the blind predictions; all 40 rows recorded it). Leads got the contract without rule 8, workers were replayed from the published run, so run index and worker files pair one to one. Tokens count everything sent and received. Data: [`results/blind/summary.md`](results/blind/summary.md) and [`results/blind/runs.jsonl`](results/blind/runs.jsonl). The comparison below was computed by script over the blind and published `runs.jsonl`, keyed by (run, arm).
+Run on 12 Oct 2026, n=10 per arm, on code commit `894edf0` (the commit that froze the blind predictions; all 40 rows recorded it). Leads got the contract without rule 8, workers were replayed from the published run, so run index and worker files pair one to one. Tokens count everything sent and received. Data: [`results/blind/summary.md`](results/blind/summary.md) and [`results/blind/runs.jsonl`](results/blind/runs.jsonl). The comparison below is [`results/blind/compare.md`](results/blind/compare.md), written by `experiment.py --lead-contract blind --summarise-only --out results/blind/runs.jsonl --summary results/blind/summary.md --compare-to results/runs.jsonl`, keyed by (run, arm).
 
 | Arm | Runs with a regression, blind (published) | Final hub timeout 300 ms, blind (published) | Paired flips (runs whose final hub timeout differs) | Management tokens, blind (published) | Ratio |
 |---|---|---|---|---|---|
