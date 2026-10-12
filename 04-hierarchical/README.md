@@ -142,7 +142,6 @@ The surprises we named: `by-runtime` regressing no more than `by-team` happened 
 - Management time is reported as summed call seconds (parallel sub-lead calls add up), not elapsed time, and the reused `by-runtime` sub-leads count in the `by-runtime` row only.
 - Rows record the code commit, with `-dirty` when the code differs from it; the summary refuses dirty or mixed commits. Rows also list calls that errored and calls whose served model differed from the requested one.
 - There is no failure injection here: partial failure is 03's question.
-- `hier_hub.py` duplicates three small helpers from 03 so the folder runs on its own. Moving them into `src/topologies/` is logged debt.
 
 ## Run it yourself
 
@@ -165,7 +164,7 @@ uv run 04-hierarchical/experiment.py --summarise-only
 | [`hier.py`](hier.py) | The workers, sub-leads and platform lead, applying their output to a fresh repo, scoring through the shared checker, the run record. |
 | [`hier_prompts.py`](hier_prompts.py) | Every prompt and reply schema. |
 | [`hier_harm.py`](hier_harm.py) | Which requests would break a regression need, inside or outside the requester's subtree, and the coupling ladder. |
-| [`hier_hub.py`](hier_hub.py) | Reading and editing `platform.yaml`, `service.yaml` overrides, the mandate check (copied from 03). |
+| [`hier_hub.py`](hier_hub.py) | Re-exports the hub, override and mandate helpers shared with 03 from [`src/topologies/hubfile.py`](../src/topologies/hubfile.py). |
 | [`hier_config.py`](hier_config.py) | The models, the arms, the two cuts, owner teams. |
 | [`run.py`](run.py) | One paired run, printed. |
 | [`experiment.py`](experiment.py) | The benchmark loop, the summary and the pre-registration guard. |
