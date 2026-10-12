@@ -45,7 +45,7 @@ Issue 14 (published 6 Oct 2026) closed with: "Next week, one level up. Leads man
   - **success:** `predictions-draft.md` exists; each `experiment.py` refuses while it is missing or says DRAFT, or while `PREDICTIONS.md` lacks the folder's section; dry runs are disclosed in the frozen predictions.
 - **CAP-9**
   - **intent:** The shared world and answer key are reused, not changed.
-  - **success:** `src/topologies/fixcheck.py`, `harbour.py`, `fixtures/harbour-bikes/` (including CHECKER.md and CONTRACT.md) are byte-identical to 7888d48; the 305 existing tests still pass.
+  - **success:** `src/topologies/fixcheck.py`, `harbour.py`, `fixtures/harbour-bikes/` (including CHECKER.md and CONTRACT.md) are byte-identical to 7888d48; the 305 existing tests still pass. *Amended 2026-10-12, after both benchmarks:* `fixcheck.py` changed one label (an untouched `owner: null` is not fixed, not outside contract; CHECKER.md entry of that date), proven by replay to leave risks fixed and regressions unchanged; CONTRACT.md and the fixture stay byte-identical.
 
 ## Constraints
 

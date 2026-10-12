@@ -160,7 +160,7 @@ The surprises we named did not happen. There was no gap in first-problem traceab
 - Dry runs before the benchmark are disclosed in `PREDICTIONS.md`.
 - Token counts include Claude Code's fixed prompt per call (see the [root README](../README.md#setup)); they are counts, not cost. The headline token column is operating tokens (consumers plus owner); the investigator is reported apart because its prompt grows with the records the arm keeps.
 - Traceability hit the ceiling (60 of 60 in every arm, stripped trace included). With this few faults and this easy a trail, the investigator cannot separate the arms, so the Correlation Identifier result is "no effect seen on this task", not "no effect".
-- `no-owner` shows 1.0 outside contract on average: that is fleet-telemetry's planted `no_owner` risk, which nobody fixes, labelled by the frozen checker as outside contract (the same label artifact as in folder 03). Risks-fixed counts are unaffected.
+- `no-owner` shows 1.0 outside contract on average: that is fleet-telemetry's planted `no_owner` risk, which nobody fixes, labelled by the frozen checker as outside contract (the same label artifact as in folder 03). Risks-fixed counts are unaffected. *Fixed 2026-10-12* in the checker (see `CHECKER.md`); relabelled from the stored per-risk results the column is 0.0, and the table keeps the label as recorded.
 - The steward and the platform agent end at the same 11.0 of 11, so the arms separate on cost and false alarms only, at n=10. The 22% token gap and the 3 false alarms in 50 are single-task numbers.
 - Comparisons hold inside this folder only, never against 01 to 04.
 
