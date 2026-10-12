@@ -299,6 +299,8 @@ def instances_fixed(repo: Repo, service: str) -> str:
 
 def fleet_owner(repo: Repo) -> str:
     owner = repo.service("fleet-telemetry").get("owner")
+    if owner is None:
+        raise NotFixed("fleet-telemetry still has no owner")
     if not isinstance(owner, dict) or not isinstance(owner.get("team"), str) or not isinstance(owner.get("contact"), str):
         raise OutsideContract(f"owner is {owner!r}, not a mapping with team and contact")
     teams = yaml.safe_load((FIXTURE / "teams.yaml").read_text(encoding="utf-8"))["teams"]

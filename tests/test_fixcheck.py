@@ -66,6 +66,16 @@ def test_unchanged_repo_fixes_nothing_and_breaks_nothing(repo):
     assert_readable(result)
 
 
+def test_untouched_service_is_not_fixed_rather_than_outside_contract(repo):
+    assert check(repo).outside_contract == []
+    reference_fix(repo)
+    set_service(repo, "fleet-telemetry", "owner", None)
+    result = check(repo)
+    assert result.risks["fleet-telemetry.no_owner"].reason == "fleet-telemetry still has no owner"
+    assert not result.risks["fleet-telemetry.no_owner"].fixed
+    assert result.outside_contract == []
+
+
 def test_checking_does_not_write_into_the_repo(repo):
     reference_fix(repo)
     before = sorted(path for path in repo.rglob("*"))
