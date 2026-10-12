@@ -1,7 +1,7 @@
 """Load the worker replies of a published run so another variant can reuse them without calling a worker."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from hier import WorkerResult
@@ -35,5 +35,7 @@ def load_replay(path: Path) -> Replay:
         raise ValueError(f"replay source {path} mixes code commits {sorted(commits)} or worker models {sorted(models)}")
     by_run: dict[int, list[WorkerResult]] = {}
     for row in rows:
+        if row["run"] in by_run and [asdict(worker) for worker in by_run[row["run"]]] != row["workers"]:
+            raise ValueError(f"replay source {path}: the arm rows of run {row['run']} do not carry the same workers")
         by_run.setdefault(row["run"], [WorkerResult(**worker) for worker in row["workers"]])
     return Replay(path=str(path), code_commit=commits.pop(), worker_model=models.pop(), workers_by_run=by_run)

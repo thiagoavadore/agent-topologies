@@ -15,6 +15,7 @@ from hier_prompts import LEAD_CONTRACTS
 from topologies.model import backend_from_name
 
 BENCHMARK_FILE = Path(__file__).resolve().parent / "results" / "runs.jsonl"
+BENCHMARK_FILES = (BENCHMARK_FILE, BENCHMARK_FILE.parent / "blind" / "runs.jsonl")
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,10 +61,12 @@ def describe(row: dict) -> str:
 
 def main() -> None:
     args = parse_args()
-    if args.out and args.out.resolve() == BENCHMARK_FILE:
-        raise SystemExit("run.py never writes results/runs.jsonl: that file is for experiment.py. Pick a scratch file for --out.")
-    backend_name = args.backend or os.environ.get("TOPOLOGIES_BACKEND", "claude-cli")
+    if args.out and args.out.resolve() in BENCHMARK_FILES:
+        raise SystemExit("run.py never writes results/runs.jsonl or results/blind/runs.jsonl: those files are for experiment.py. Pick a scratch file for --out.")
     replay = load_replay(args.replay_workers) if args.replay_workers else None
+    if replay and replay.worker_model != args.worker_model:
+        raise SystemExit(f"--worker-model {args.worker_model} disagrees with the replayed workers' model {replay.worker_model}")
+    backend_name = args.backend or os.environ.get("TOPOLOGIES_BACKEND", "claude-cli")
     rows = run_pair(
         run=args.run,
         backend=backend_from_name(backend_name),

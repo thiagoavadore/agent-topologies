@@ -22,8 +22,12 @@ FROZEN_DIGESTS = {
     "worker_system": "108aad7571f150d5",
     "worker_prompt": "3c12ef6b36f31bc7",
     "sub_lead_prompt": "b3103af537844c87",
-    "sub_lead_system_python": "6021a206387883a0",
-    "sub_lead_system_rentals": "c24d34afeb6383b4",
+    "sub_lead_system_by-team_rentals-and-money": "c24d34afeb6383b4",
+    "sub_lead_system_by-team_fleet": "12f2d0e1aebd7538",
+    "sub_lead_system_by-team_customer-and-back-office": "4a1a57750af0b4c7",
+    "sub_lead_system_by-runtime_python": "6021a206387883a0",
+    "sub_lead_system_by-runtime_jvm-and-go": "ddac163919a3282b",
+    "sub_lead_system_by-runtime_node-ruby-rust": "bfc26b56ec60f654",
     "top_prompt_flat": "2f9616311873a5bc",
     "top_prompt_by-team_needs_False": "9b212fd96118797d",
     "top_prompt_by-team_needs_True": "7ca8cf6bd80e2cc3",
@@ -76,6 +80,7 @@ def test_blind_contract_refuses_a_contract_without_exactly_one_rule_8(monkeypatc
 
 def test_full_prompts_unchanged():
     assert digests() == FROZEN_DIGESTS
+    assert len([name for name in FROZEN_DIGESTS if name.startswith("sub_lead_system_")]) == 6
     assert digests(contract="full") == FROZEN_DIGESTS
     changed = {name for name, value in digests(contract="blind").items() if value != FROZEN_DIGESTS[name]}
     assert changed == {name for name in FROZEN_DIGESTS if "sub_lead_system" in name or name.startswith("top_prompt")}
@@ -160,7 +165,7 @@ def test_blind_rows_tagged_and_separated(tmp_path, monkeypatch):
     assert experiment.pair_tokens(rows) == sum(r["tokens_by_tier"]["top"] for r in rows) + sum(r["tokens_by_tier"]["sub_leads"] for r in rows if not r["sub_leads_shared_with"])
 
     full_rows = experiment.load_rows(path)
-    write(tmp_path / "mixed.jsonl", [full_rows[0], rows[0]])
+    write(tmp_path / "mixed.jsonl", [full_rows[0], rows[1]])
     with pytest.raises(ValueError, match="mixes lead contracts"):
         experiment.summarise(tmp_path / "mixed.jsonl")
     assert "mixes" not in experiment.summarise(path)[:200]  # a file of full-contract rows (no replay field needed) still summarises
@@ -174,7 +179,7 @@ def test_blind_rows_tagged_and_separated(tmp_path, monkeypatch):
     monkeypatch.setattr(experiment, "run_pairs", lambda *args, **kwargs: seen.setdefault("out", args[2]))
     monkeypatch.setattr(experiment, "summarise", lambda path: "table")
     monkeypatch.setattr(experiment, "BLIND_RESULTS", tmp_path / "blind-dir")
-    monkeypatch.setattr("sys.argv", ["experiment.py", "--lead-contract", "blind"])
+    monkeypatch.setattr("sys.argv", ["experiment.py", "--lead-contract", "blind", "--replay-workers", str(path), "--worker-model", "w"])
     experiment.main()
     assert seen == {"contract": "blind", "out": tmp_path / "blind-dir" / "runs.jsonl"}
     assert (tmp_path / "blind-dir" / "summary.md").exists()
@@ -200,7 +205,7 @@ def test_run_py_takes_the_blind_and_replay_flags(tmp_path, monkeypatch, capsys):
     path, _ = published(tmp_path, runs=(1, 2, 3))
     monkeypatch.setattr(run_module, "backend_from_name", lambda name: ScriptedBackend(script()))
     scratch = tmp_path / "scratch.jsonl"
-    monkeypatch.setattr("sys.argv", ["run.py", "--run", "3", "--lead-contract", "blind", "--replay-workers", str(path), "--out", str(scratch)])
+    monkeypatch.setattr("sys.argv", ["run.py", "--run", "3", "--lead-contract", "blind", "--replay-workers", str(path), "--worker-model", "w", "--out", str(scratch)])
     run_module.main()
     printed = capsys.readouterr().out
     assert "[blind leads]" in printed and "replayed from" in printed

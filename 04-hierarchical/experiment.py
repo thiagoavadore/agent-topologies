@@ -58,6 +58,8 @@ def run_pairs(
     n: int, arms: list[str], out: Path, backend_name: str | None, worker_model: str, lead_model: str, parallel_arms: bool = False,
     token_ceiling: int | None = None, lead_contract: str = "full", replay: Replay | None = None,
 ) -> None:
+    if replay and replay.worker_model != worker_model:
+        raise SystemExit(f"Refusing to run: --worker-model {worker_model} disagrees with the replayed workers' model {replay.worker_model}")
     missing = [index for index in range(1, n + 1) if replay and index not in replay.workers_by_run]
     if missing:
         raise SystemExit(f"Refusing to run: replay source {replay.path} has no run index {missing}")
@@ -105,6 +107,10 @@ def summarise(path: Path) -> str:
     if not path.exists():
         return f"No runs at {path}."
     rows = load_rows(path)
+    keys = [(row["run"], row["arm"]) for row in rows]
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    if duplicates:
+        raise ValueError(f"{path.name} has duplicate (run, arm) rows {duplicates}; summarise a file with one row per run and arm")
     contracts = {row.get("lead_contract", "full") for row in rows}
     if len(contracts) > 1:
         raise ValueError(f"{path.name} mixes lead contracts {sorted(contracts)}; summarise one contract per file")
@@ -186,8 +192,40 @@ def summarise(path: Path) -> str:
         f"\nWorkers {worker_model}, leads {lead_model} (served: {served}), backend {backend}. Run dates: {', '.join(sorted({row['at'][:10] for row in rows}))}. "
         + (" Leads were blind to CONTRACT rule 8 (the line naming pricing-engine's use of PLATFORM_HTTP_TIMEOUT)." if contract == "blind" else "")
         + (f" Worker replies were replayed from {replay_source['path']} (code {replay_source['code_commit']}), so worker tokens were not spent here." if replay_source else "")
-        + " Worker tokens are the same in all arm rows of a run, and the by-runtime-registry row repeats the by-runtime sub-lead tokens (the calls ran once), so do not sum tokens across rows."
+        + (" " if contract == "blind" or replay_source else "") + "Worker tokens are the same in all arm rows of a run, and the by-runtime-registry row repeats the by-runtime sub-lead tokens (the calls ran once), so do not sum tokens across rows."
     )
+    return "\n".join(lines)
+
+
+def compare(path: Path, other: Path) -> str:
+    """Pair the rows of `path` (blind) with `other` (published) by (run, arm) and tabulate what the contract change moved."""
+    mine, theirs = ({(row["run"], row["arm"]): row for row in load_rows(file)} for file in (path, other))
+    if set(mine) != set(theirs):
+        raise ValueError(f"{path.name} and {other.name} do not cover the same (run, arm) rows: {sorted(set(mine) ^ set(theirs))}")
+    for run in sorted({run for run, _ in mine}):
+        arms = [arm for run_, arm in mine if run_ == run]
+        if any(mine[(run, arm)]["workers"] != theirs[(run, arm)]["workers"] for arm in arms) or len({json.dumps(mine[(run, arm)]["workers"], sort_keys=True) for arm in arms}) > 1:
+            raise ValueError(f"run {run}: the worker replies differ between {path.name} and {other.name}, so the rows are not paired")
+    label = lambda file: f"{file.parent.name}/{file.name}"
+    hub = lambda row: row["final_hub"]["http.default_timeout"]
+    lines = [
+        f"Paired comparison: `{label(path)}` against `{label(other)}`, rows keyed by (run, arm), worker replies identical per run index.",
+        "",
+        "| arm | n | regressions: this file (runs) | regressions: other file (runs) | final hub timeout 300ms: this file | final hub timeout 300ms: other file | paired flips (runs where the final hub timeout differs) | management tokens, mean: this file | management tokens, mean: other file | ratio |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for arm in ARMS:
+        runs = sorted(run for run, arm_ in mine if arm_ == arm)
+        if not runs:
+            continue
+        a, b = [mine[(run, arm)] for run in runs], [theirs[(run, arm)] for run in runs]
+        flips = [run for run, x, y in zip(runs, a, b) if hub(x) != hub(y)]
+        tokens_a, tokens_b = mean(row["management_tokens"] for row in a), mean(row["management_tokens"] for row in b)
+        lines.append(
+            f"| {arm} | {len(runs)} | {sum(1 for row in a if row['score']['regressions'])} of {len(a)} | {sum(1 for row in b if row['score']['regressions'])} of {len(b)} "
+            f"| {sum(1 for row in a if hub(row) == '300ms')} of {len(a)} | {sum(1 for row in b if hub(row) == '300ms')} of {len(b)} "
+            f"| {len(flips)}{' (run ' + ', '.join(map(str, flips)) + ')' if flips else ''} | {tokens_a:,.0f} | {tokens_b:,.0f} | {tokens_a / tokens_b if tokens_b else 0:.2f} |"
+        )
     return "\n".join(lines)
 
 
@@ -205,11 +243,14 @@ def main() -> None:
     parser.add_argument("--worker-model", default=WORKER_MODEL)
     parser.add_argument("--lead-model", default=LEAD_MODEL)
     parser.add_argument("--summarise-only", action="store_true")
+    parser.add_argument("--compare-to", type=Path, default=None, help="runs.jsonl to pair with --out (for example the published run); writes compare.md next to the summary")
     args = parser.parse_args()
     folder = BLIND_RESULTS if args.lead_contract == "blind" else RESULTS
     args.out, args.summary = args.out or folder / "runs.jsonl", args.summary or folder / "summary.md"
     if args.lead_contract == "blind" and args.out.resolve() == (RESULTS / "runs.jsonl").resolve():
         raise SystemExit("Refusing to write blind rows to results/runs.jsonl: that file holds the full-contract benchmark. Use results/blind/.")
+    if args.lead_contract == "blind" and not args.summarise_only and not args.replay_workers:
+        raise SystemExit("Refusing to run the blind benchmark without --replay-workers: its design pairs every index with a published run.")
     if not args.summarise_only:
         refuse_unregistered(args.lead_contract)
         replay = load_replay(args.replay_workers) if args.replay_workers else None
@@ -218,6 +259,10 @@ def main() -> None:
     args.summary.parent.mkdir(parents=True, exist_ok=True)
     args.summary.write_text(table + "\n")
     print(table)
+    if args.compare_to:
+        comparison = compare(args.out, args.compare_to)
+        (args.summary.parent / "compare.md").write_text(comparison + "\n")
+        print("\n" + comparison)
 
 
 if __name__ == "__main__":

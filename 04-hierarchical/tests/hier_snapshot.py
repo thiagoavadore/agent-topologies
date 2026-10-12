@@ -32,10 +32,11 @@ def render(**kwargs) -> dict[str, str]:
             "worker_system": hier_prompts.worker_system(),
             "worker_prompt": hier_prompts.worker_prompt(base, "bookings-api"),
             "sub_lead_prompt": hier_prompts.sub_lead_prompt(hub_text, base, CUTS["by-runtime"]["python"], [worker]),
-            "sub_lead_system_python": sub_lead_system_text(CUTS["by-runtime"]["python"], **kwargs),
-            "sub_lead_system_rentals": sub_lead_system_text(CUTS["by-team"]["rentals-and-money"], **kwargs),
             "top_prompt_flat": hier_prompts.top_prompt(hub_text, REQUESTS_UP, {}, needs=True, **kwargs),
         }
+        for cut, groups in CUTS.items():
+            for group, services in groups.items():
+                out[f"sub_lead_system_{cut}_{group}"] = sub_lead_system_text(services, **kwargs)
         for cut in CUTS:
             for needs in (False, True):
                 out[f"top_prompt_{cut}_needs_{needs}"] = hier_prompts.top_prompt(hub_text, REQUESTS_UP, CUTS[cut], needs=needs, **kwargs)
